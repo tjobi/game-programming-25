@@ -14,4 +14,4 @@ If you don't have an IDE setup, you can follow this quick platform-independent s
 
 After reopening the editor, you should see all available targets in the cmake tab, in the `Project Outline` section.
 
-Build and run them from there, or set one to be the "defaul" target (`right-click->Set Launch/Debug Target`)
+Build and run them from there, or set one to be the "default" target (`right-click->Set Launch/Debug Target`)
