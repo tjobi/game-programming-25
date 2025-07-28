@@ -22,4 +22,4 @@ Build and run them from there, or set one to be the "default" target (`right-cli
 - [ ] be sure to befamiliar with the basics of C/C++ (syntax, control flow, variable and functions, structs/arrays/enums/unions/, pointers). You can check the [course page](https://learnit.itu.dk/course/view.php?id=3024686#section-1) for additional resources on this
 - [ ] refresh a bit of linear algebra and trigonometry
 
-I've setu up a folder for you (`playground`) if you want to test things out. Just create a `.cpp` file in there and reconfigure the CMake project, 
+I've setu up a folder for you (`playground`) if you want to test things out. Just create a `.cpp` file in there and reconfigure the CMake project, and you can try everything that doesn't involve external dependencies.
