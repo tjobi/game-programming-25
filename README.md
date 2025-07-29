@@ -6,7 +6,9 @@ You are free to use any development setup you want, as long as you can confortab
 
 If you don't have an IDE setup, you can follow this quick platform-independent setup:
 1. download and install [CMake](https://cmake.org/download/) (for mac users, use [brew](https://brew.sh/) instead of downloading from the website)
-2. download [VSCode](https://code.visualstudio.com/download) and install the C/C++ Extension Pack (the one from Microsoft)
+2. download [VSCode](https://code.visualstudio.com/download) and install these two extensions (both of them from Microsoft)
+    1. C/C++ Extension Pack 
+    2. CMake Tools
 4. clone the exercise repository `git clone --recurse-submodules https://github.com/Chris-Carvelli/game-programming-25.git` 
 5. open repository in VSCode
 6. in `Preferences->Settings`, search for `cmake path` and replace the content with the path to your CMake executable (you can find in typing `where cmake` or `which cmake` on the command line)
