@@ -6,12 +6,11 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 set(ARCH x64)
 
+# 3rd party libraries
 add_subdirectory(lib/SDL)
 
-# it is generally recommended to add include dirs to specific targets only, BUT
-# VS doesn't understand it. This way, we can actually navigate the header files
-#include_directories(lib/SDL/include)
-
+# repo's executables
 add_subdirectory(examples)
-
 add_subdirectory(playground)
+add_subdirectory(live_coding)
+add_subdirectory(exercises)
