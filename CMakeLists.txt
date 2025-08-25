@@ -13,3 +13,5 @@ add_subdirectory(lib/SDL)
 #include_directories(lib/SDL/include)
 
 add_subdirectory(examples)
+
+add_subdirectory(playground)
