@@ -1,5 +1,12 @@
 #include <SDL3/SDL.h>
 
+enum {
+	UP 		= 0,
+	DOWN 	= 1,
+	LEFT 	= 2,
+	RIGHT 	= 3
+};
+
 int main(void)
 {
 	SDL_Log("hello sdl");
@@ -31,21 +38,30 @@ int main(void)
 
 	int delay_type = 0;
 
-	float player_size = 40;
-	SDL_FRect player_rect;
-	player_rect.w = player_size;
-	player_rect.h = player_size;
-	player_rect.x = window_w / 2 - player_size / 2;
-	player_rect.y = window_h / 2 - player_size / 2;
+	const float MOVE_SPEED = 5;
+	const float player_size = 40;
 
+	SDL_FRect player_rect1;
+	player_rect1.w = player_size;
+	player_rect1.h = player_size;
+	player_rect1.x = window_w / 2 - player_size / 2;
+	player_rect1.y = window_h / 2 - player_size / 2;
 
-	bool btn_pressed_up = false;
+	SDL_FRect player_rect2;
+	player_rect2.w = player_size;
+	player_rect2.h = player_size;
+	player_rect2.x = window_w / 3 - player_size / 2;
+	player_rect2.y = window_h / 2 - player_size / 2;
 
+	bool btns_player1[4];
+	bool btns_player2[4];
+	
 	SDL_GetCurrentTime(&walltime_frame_beg);
 	while(!quit)
 	{
 		// input
 		SDL_Event event;
+		//NOTE: may want to limit the amount of events that we process - to avoid stuttering
 		while(SDL_PollEvent(&event))
 		{
 			switch(event.type)
@@ -56,8 +72,64 @@ int main(void)
 				case SDL_EVENT_KEY_DOWN:
 					if(event.key.key >= SDLK_0 && event.key.key < SDLK_5)
 						delay_type = event.key.key - SDLK_0;
+					switch(event.key.key)
+					{
+						case SDLK_W: btns_player1[UP] 	 = true; break;
+						case SDLK_S: btns_player1[DOWN]  = true; break;
+						case SDLK_A: btns_player1[LEFT]  = true; break;
+						case SDLK_D: btns_player1[RIGHT] = true; break;
+						case SDLK_UP: btns_player2[UP] 	 	 = true; break;
+						case SDLK_DOWN: btns_player2[DOWN]   = true; break;
+						case SDLK_LEFT: btns_player2[LEFT]   = true; break;
+						case SDLK_RIGHT: btns_player2[RIGHT] = true; break;
+					}
+					break;
+				case SDL_EVENT_KEY_UP:
+					switch(event.key.key)
+					{
+						case SDLK_W: btns_player1[UP] 	 = false; break;
+						case SDLK_S: btns_player1[DOWN]  = false; break;
+						case SDLK_A: btns_player1[LEFT]  = false; break;
+						case SDLK_D: btns_player1[RIGHT] = false; break;
+						case SDLK_UP: btns_player2[UP] 	 = false; break;
+						case SDLK_DOWN: btns_player2[DOWN]  = false; break;
+						case SDLK_LEFT: btns_player2[LEFT]  = false; break;
+						case SDLK_RIGHT: btns_player2[RIGHT] = false; break;
+					}
+					break;
+				case SDL_EVENT_MOUSE_BUTTON_DOWN:
+					player_rect1.x = event.button.x - player_size/2;
+					player_rect1.y = event.button.y - player_size/2;
 					break;
 			}
+		}
+		//update
+		{
+			//------ PLAYER 1 ------
+			if(btns_player1[UP] && 0 <= player_rect1.y) 
+				player_rect1.y = SDL_max(0, player_rect1.y - 1 * MOVE_SPEED);
+
+			if(btns_player1[DOWN] && window_h-player_size >= player_rect1.y) 	
+				player_rect1.y = SDL_min(window_h-player_size, player_rect1.y + 1*MOVE_SPEED);
+			
+			if(btns_player1[LEFT] && 0 <= player_rect1.x) 
+				player_rect1.x = SDL_max(0, player_rect1.x - 1*MOVE_SPEED);
+			
+			if(btns_player1[RIGHT] && window_w - player_size >= player_rect1.x) 
+				player_rect1.x = SDL_min(window_w-player_size, player_rect1.x + 1*MOVE_SPEED);
+
+			//------ PLAYER 2 --------
+			if(btns_player2[UP] && 0 <= player_rect2.y) 
+				player_rect2.y = SDL_max(0, player_rect2.y - 1 * MOVE_SPEED);
+
+			if(btns_player2[DOWN] && window_h-player_size >= player_rect2.y) 	
+				player_rect2.y = SDL_min(window_h-player_size, player_rect2.y + 1*MOVE_SPEED);
+			
+			if(btns_player2[LEFT] && 0 <= player_rect2.x) 
+				player_rect2.x = SDL_max(0, player_rect2.x - 1*MOVE_SPEED);
+			
+			if(btns_player2[RIGHT] && window_w - player_size >= player_rect2.x) 
+				player_rect2.x = SDL_min(window_w-player_size, player_rect2.x + 1*MOVE_SPEED);
 		}
 
 		// clear screen
@@ -67,7 +139,15 @@ int main(void)
 		SDL_RenderClear(renderer);
 		
 		SDL_SetRenderDrawColor(renderer, 0x3C, 0x63, 0xFF, 0XFF);
-		SDL_RenderFillRect(renderer, &player_rect);
+		SDL_RenderFillRect(renderer, &player_rect1);
+
+		SDL_SetRenderDrawColor(renderer, 0x3C, 0xFF, 0x63, 0XFF);
+		SDL_RenderFillRect(renderer, &player_rect2);
+
+		if(SDL_HasRectIntersectionFloat(&player_rect1, &player_rect2)){
+			SDL_SetRenderDrawColor(renderer, 0xFF, 0x00, 0x00, 0xFF);
+			SDL_RenderDebugText(renderer, window_w/2, window_h/2, "ouch");
+		}
 
 		SDL_GetCurrentTime(&walltime_work_end);
 		time_elapsed_work = walltime_work_end - walltime_frame_beg;
