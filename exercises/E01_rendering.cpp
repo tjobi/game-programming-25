@@ -4,6 +4,7 @@
 
 #define ENABLE_DIAGNOSTICS
 #define NUM_ASTEROIDS 10
+#define NUM_PROJECTILES 7
 
 
 #define VALIDATE(expression) if(!(expression)) { SDL_Log("%s\n", SDL_GetError()); }
@@ -28,6 +29,7 @@ struct SDLContext
 	bool btn_pressed_down  = false;
 	bool btn_pressed_left  = false;
 	bool btn_pressed_right = false;
+	bool btn_pressed_shoot = false;
 };
 
 struct Entity
@@ -41,10 +43,94 @@ struct Entity
 	SDL_FRect    texture_rect;
 };
 
+struct Projectile
+{
+	bool is_active;
+	union 
+	{
+		Entity live;
+		Projectile* next;
+	} state;
+
+	public:
+		Projectile* getNext() const { return state.next; }
+		void setNext(Projectile* next) { state.next = next; }
+};
+
+struct ProjectilePool 
+{
+	Projectile* firstFree;
+	Projectile projectiles[NUM_PROJECTILES];
+
+	int entity_size_world;
+	int entity_texture_size;
+	SDL_Texture* texture_atlas;
+
+	public:
+		void initPool(int world_size, int texture_size, SDL_Texture* atlas) {
+			entity_texture_size = texture_size;
+			entity_size_world = world_size;
+			texture_atlas = atlas;
+			
+			firstFree = &projectiles[0];
+			for (int i = 0; i < NUM_PROJECTILES - 1; ++i) {
+				projectiles[i].setNext(&projectiles[i + 1]);
+			}
+			projectiles[NUM_PROJECTILES - 1].setNext(nullptr);
+		}
+
+		bool spawnProjectile(float x, float y)
+		{
+			const int   projectile_sprite_coords_x = 7;
+			const int   projectile_sprite_coords_y = 3;
+			const int	projectile_speed_min = entity_size_world * 10;
+			
+			Projectile* projectile = firstFree;
+			if(!projectile) return false;
+			
+			firstFree = projectile->getNext();
+
+			Entity* proj = &projectile->state.live;
+			projectile->is_active = true;
+			proj->position.x = x;
+			proj->position.y = y;
+
+			proj->size = entity_size_world;
+			proj->rect.w = proj->size;
+			proj->rect.h = proj->size;
+			proj->texture_atlas = texture_atlas;
+			proj->velocity = projectile_speed_min;
+
+
+			proj->texture_rect.w = proj->texture_rect.h = entity_texture_size;
+			proj->texture_rect.x = entity_texture_size * projectile_sprite_coords_x;
+			proj->texture_rect.y = entity_texture_size * projectile_sprite_coords_y;
+			return true;
+		}
+
+		void destroyProjectile(Projectile* p)
+		{
+			p->is_active = false;
+			p->setNext(firstFree);
+			firstFree = p;
+		}
+
+		int countActive()
+		{
+			int freeCount = 0;
+			for(Projectile* cur = firstFree; cur; cur = cur->getNext()) freeCount++;
+			return NUM_PROJECTILES - freeCount;
+		}
+};
+
 struct GameState
 {
 	Entity player;
 	Entity asteroids[NUM_ASTEROIDS];
+	Entity projectiles[NUM_PROJECTILES];
+	ProjectilePool projectile_pool;
+
+	SDL_Time last_shot;
 
 	SDL_Texture* texture_atlas;
 };
@@ -76,12 +162,15 @@ static void init(SDLContext* context, GameState* game_state)
 	const float asteroid_speed_range = entity_size_world * 4;
 	const int   asteroid_sprite_coords_x = 0;
 	const int   asteroid_sprite_coords_y = 4;
+	const int   projectile_sprite_coords_x = 7;
+	const int   projectile_sprite_coords_y = 3;
+	const int	projectile_speed_min = entity_size_world * 10;
 	// load textures
 	{
 		int w = 0;
 		int h = 0;
 		int n = 0;
-		unsigned char* pixels = stbi_load("data/kenney/simpleSpace_tilesheet_2.png", &w, &h, &n, 0);
+		unsigned char* pixels = stbi_load("../data/kenney/simpleSpace_tilesheet_2.png", &w, &h, &n, 0);
 
 		SDL_assert(pixels);
 
@@ -141,6 +230,9 @@ static void init(SDLContext* context, GameState* game_state)
 			asteroid_curr->texture_rect.y = entity_size_texture * asteroid_sprite_coords_y;
 		}
 	}
+
+	//Projectiles
+	game_state->projectile_pool.initPool(entity_size_world, entity_size_texture, game_state->texture_atlas);
 }
 
 static void update(SDLContext* context, GameState* game_state)
@@ -149,13 +241,41 @@ static void update(SDLContext* context, GameState* game_state)
 	{
 		Entity* entity_player = &game_state->player; 
 		if(context->btn_pressed_up)
-			entity_player->position.y -= context->delta * entity_player->velocity;
+		{
+			//clamp at the top of the screen
+			float y = entity_player->position.y - context->delta * entity_player->velocity;
+			entity_player->position.y = SDL_max(y, 0);
+		}
 		if(context->btn_pressed_down)
-			entity_player->position.y += context->delta * entity_player->velocity;
+		{
+			//clamp at the bottom of the screen
+			float y = entity_player->position.y + context->delta * entity_player->velocity;
+			if(y + entity_player->size <= context->window_h) entity_player->position.y = y;
+		}
 		if(context->btn_pressed_left)
-			entity_player->position.x -= context->delta * entity_player->velocity;
+		{
+			//allow teleport on sides
+			// TODO: Render the other half of the space ship ...
+			float x = entity_player->position.x - context->delta * entity_player->velocity; 
+			if(x + entity_player->size/2 <= 0) entity_player->position.x = context->window_w - entity_player->size/2;
+			else entity_player->position.x = x;
+		}
 		if(context->btn_pressed_right)
-			entity_player->position.x += context->delta * entity_player->velocity;
+		{
+			float x = entity_player->position.x + context->delta * entity_player->velocity;
+			if(x + entity_player->size / 2 >= context->window_w) entity_player->position.x = -entity_player->size/2;
+			else entity_player->position.x = x;
+		}
+
+		SDL_Time current_time;
+		if(context->btn_pressed_shoot && SDL_GetCurrentTime(&current_time) && NS_TO_MILLIS(current_time - game_state->last_shot) >= 200)
+		{
+			float x = entity_player->position.x;
+			float y = entity_player->position.y - entity_player->size / 2;
+			if(!game_state->projectile_pool.spawnProjectile(x,y))
+				SDL_Log("ProjectilePool was full, couldn't create projectile");
+			game_state->last_shot = current_time;
+		}
 
 		entity_player->rect.x = entity_player->position.x;
 		entity_player->rect.y = entity_player->position.y;
@@ -168,14 +288,40 @@ static void update(SDLContext* context, GameState* game_state)
 		);
 	}
 
+	// Projectiles
+	{
+		for (size_t i = 0; i < NUM_PROJECTILES; i++)
+		{
+			auto projectile = &game_state->projectile_pool.projectiles[i];
+			if(!projectile->is_active) continue;
+			auto proj = &projectile->state.live;
+
+			float y = proj->position.y - context->delta * proj->velocity;
+			if(y <= 0.0f) { 
+				game_state->projectile_pool.destroyProjectile(projectile);
+				continue; 
+			}
+			proj->position.y = y;
+			proj->rect.x = proj->position.x;
+			proj->rect.y = proj->position.y;
+			SDL_SetTextureColorMod(proj->texture_atlas, 0xFF, 0x00, 0xFF);
+			SDL_RenderTexture(
+				context->renderer,
+				proj->texture_atlas,
+				&proj->texture_rect,
+				&proj->rect
+			);
+		}
+	}
+
 	// asteroids
 	{
 		// how close an asteroid must be before categorizing it as "too close" (100 pixels. We square it because we can avoid doing the square root later)
-		const float warning_distance_sq = 100*100;
+		constexpr float warning_distance_sq = 100*100;
 
 		// how close an asteroid must be before triggering a collision (64 pixels. We square it because we can avoid doing the square root later)
 		// the number 64 is obtained by summing togheter the "radii" of the sprites
-		const float collision_distance_sq = 64*64;
+		constexpr float collision_distance_sq = 64*64;
 
 		for(int i = 0; i < NUM_ASTEROIDS; ++i)
 		{
@@ -259,6 +405,8 @@ int main(void)
 						context.btn_pressed_down = event.key.down;
 					if(event.key.key == SDLK_D)
 						context.btn_pressed_right = event.key.down;
+					if(event.key.key == SDLK_SPACE)
+						context.btn_pressed_shoot = event.key.down;
 			}
 		}
 
@@ -285,6 +433,7 @@ int main(void)
 		SDL_SetRenderDrawColor(context.renderer, 0xFF, 0xFF, 0xFF, 0xFF);
 		SDL_RenderDebugTextFormat(context.renderer, 10.0f, 10.0f, "elapsed (frame): %9.6f ms", NS_TO_MILLIS(time_elapsed_frame));
 		SDL_RenderDebugTextFormat(context.renderer, 10.0f, 20.0f, "elapsed(work)  : %9.6f ms", NS_TO_MILLIS(time_elapsed_work));
+		SDL_RenderDebugTextFormat(context.renderer, 10.0f, 30.0f, "projectiles    : %i/%i", game_state.projectile_pool.countActive(), NUM_PROJECTILES);
 #endif
 
 		// render
