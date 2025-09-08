@@ -43,7 +43,7 @@
 // arbitrary threshold for floating point equality comparison (to avoid approximation errors)
 //
 // NOTE: this may be too big for certain game designs. Change this if you need
-#define FLOAT_EPSILON 0.001f 
+#define FLOAT_EPSILON 0.001f
 
 // *******************************************************************
 // vector math
@@ -237,16 +237,16 @@ struct color
 	}
 };
 
-#define COLOR_RED    { 1.0f, 0.0f, 0.0f, 1.0f }
-#define COLOR_GREEN  { 0.0f, 1.0f, 0.0f, 1.0f }
-#define COLOR_BLUE   { 0.0f, 0.0f, 1.0f, 1.0f }
-#define COLOR_YELLOW { 1.0f, 1.0f, 0.0f, 1.0f }
-#define COLOR_BLACK  { 0.0f, 0.0f, 0.0f, 1.0f }
-#define COLOR_DARK   { 0.1f, 0.1f, 0.1f, 1.0f }
-#define COLOR_WHITE  { 1.0f, 1.0f, 1.0f, 1.0f }
+#define COLOR_RED    color { 1.0f, 0.0f, 0.0f, 1.0f }
+#define COLOR_GREEN  color { 0.0f, 1.0f, 0.0f, 1.0f }
+#define COLOR_BLUE   color { 0.0f, 0.0f, 1.0f, 1.0f }
+#define COLOR_YELLOW color { 1.0f, 1.0f, 0.0f, 1.0f }
+#define COLOR_BLACK  color { 0.0f, 0.0f, 0.0f, 1.0f }
+#define COLOR_DARK   color { 0.1f, 0.1f, 0.1f, 1.0f }
+#define COLOR_WHITE  color { 1.0f, 1.0f, 1.0f, 1.0f }
 
-#define COLOR_TRANSPARENT_WHITE  { 1.0f, 1.0f, 1.0f, 0.0f }
-#define COLOR_TRANSPARENT_BLACK  { 0.0f, 0.0f, 0.0f, 0.0f }
+#define COLOR_TRANSPARENT_WHITE color { 1.0f, 1.0f, 1.0f, 0.0f }
+#define COLOR_TRANSPARENT_BLACK color { 0.0f, 0.0f, 0.0f, 0.0f }
 
 inline color color_saturate(color c)
 {
