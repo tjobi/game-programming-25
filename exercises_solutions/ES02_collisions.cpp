@@ -506,11 +506,12 @@ static void game_reset(SDLContext* context, GameState* state)
 
 			entity->size = vec2f{ 64, 64 } *scale_size;
 			entity->position = mul_element_wise(entity->size, coords) + vec2f { WINDOW_W / 2, WINDOW_H / 2};
-			entity->sprite = {
-				.texture = state->atlas,
-				.rect = SDL_FRect{ 0, 4*128, 128, 128 },
-				.tint = COLOR_WHITE,
-				.pivot = vec2f{ 0.5f, 0.5f }
+			entity->sprite = Sprite
+			{
+				state->atlas,
+				SDL_FRect{ 0, 4*128, 128, 128 },
+				COLOR_WHITE,
+				vec2f{ 0.5f, 0.5f }
 			};
 			entity->collider_is_static = false;
 			entity->collider_radius = 18 * scale_size;
