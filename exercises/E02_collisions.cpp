@@ -17,7 +17,9 @@
 #define WINDOW_H 600
 
 #define ENTITY_COUNT 128
+#define ENTITY_INITIAL_COUNT 120
 #define MAX_COLLISIONS 1024   // num max collisions per frame
+#define ENTITY_POOLS 4
 
 bool DEBUG_separate_collisions   = true;
 bool DEBUG_render_colliders      = true;
@@ -43,6 +45,12 @@ struct SDLContext
 	bool btn_isdown_space;
 };
 
+struct EntityPool {
+	Entity* entities[ENTITY_COUNT];
+	int alive_count;
+	vec2f min, max;
+};
+
 struct GameState
 {
 	Entity* player;
@@ -50,6 +58,7 @@ struct GameState
 	// game-allocated memory
 	Entity* entities;
 	int entities_alive_count;
+	EntityPool pools[ENTITY_POOLS];
 
 	EntityCollisionInfo* frame_collisions;
 	int frame_collisions_count;
@@ -122,7 +131,7 @@ struct Entity
 	vec2f collider_offset;
 };
 
-static Entity* entity_create(GameState* state)
+static Entity* entity_create(GameState* state, vec2f position, float radius)
 {
 	if(!(state->entities_alive_count < ENTITY_COUNT))
 		return NULL;
@@ -132,6 +141,16 @@ static Entity* entity_create(GameState* state)
 
 	Entity* ret = &state->entities[state->entities_alive_count];
 	++state->entities_alive_count;
+
+	for (size_t i = 0; i < ENTITY_POOLS; i++)
+	{
+		auto pool = &state->pools[i];
+		if(itu_lib_overlaps_circle_rect(position, radius, pool->min, pool->max))
+		{
+			pool->entities[pool->alive_count++] = ret;
+		}
+	}
+	
 
 	return ret;
 }
@@ -158,7 +177,8 @@ struct EntityCollisionInfo
 	float separation;
 };
 
-static void collision_check(GameState* state)
+//Doesn't use the world partitions
+static void collision_check_old(GameState* state)
 {
 	state->frame_collisions_count = 0;
 	for(int i = 0; i < state->entities_alive_count - 1; ++i)
@@ -198,6 +218,52 @@ static void collision_check(GameState* state)
 	}
 }
 
+// uses the world partitioning
+static void collision_check(GameState* state)
+{
+	state->frame_collisions_count = 0;
+	//b for bucket, idk
+	for (size_t k = 0; k < ENTITY_POOLS; k++)
+	{
+		auto pool = &state->pools[k];
+		for(int i = 0; i < pool->alive_count - 1; ++i)
+		{
+			Entity* e1 = pool->entities[i];
+			
+			for(int j = i + 1; j < pool->alive_count; ++j)
+			{
+				Entity* e2 = pool->entities[j];
+
+				if(itu_lib_overlaps_circle_circle(
+					e1->position + e1->collider_offset, e1->collider_radius,
+					e2->position + e2->collider_offset, e2->collider_radius
+				))
+				{
+					e1->sprite.tint = COLOR_RED;
+					e2->sprite.tint = COLOR_RED;
+
+					if(state->frame_collisions_count >= MAX_COLLISIONS)
+					{
+						SDL_Log("[WARNING] too many collisions!");
+						return;
+					}
+
+					// NOTE: here we are redoing a bunch of work that we already done in the overlap test. An easy optimization is do to have the test return the collision info
+					vec2f v = (e2->position + e2->collider_offset) - (e1->position + e1->collider_offset);
+					float l = length(v);
+					float separation_vector = e1->collider_radius + e2->collider_radius - l;
+					int new_collision_idx = state->frame_collisions_count++;
+
+					state->frame_collisions[new_collision_idx].e1 = e1;
+					state->frame_collisions[new_collision_idx].e2 = e2;
+					state->frame_collisions[new_collision_idx].normal = v / l; // normalize vector (we already need the length, so we don't need to call normalize which would do that anyway)
+					state->frame_collisions[new_collision_idx].separation = separation_vector;
+				}
+			}
+		}
+	}
+}
+
 static void collision_separate(GameState* state)
 {
 	for(int i = 0; i < state->frame_collisions_count; ++i)
@@ -208,6 +274,28 @@ static void collision_separate(GameState* state)
 		entity_collision_info.e1->position -= sep;
 		entity_collision_info.e2->position += sep;
 	}
+}
+
+//TO be used after collision_separate
+static void partition_separated_entities(GameState* state) 
+{
+	//This is extremely laggy
+	const int alive = state->entities_alive_count;
+	for (size_t i = 0; i < ENTITY_POOLS; i++)
+	{
+		auto pool = &state->pools[i];
+		pool->alive_count = 0;
+
+		for (size_t j = 0; j < alive; j++)
+		{
+			Entity* entity = &state->entities[j];
+			if(itu_lib_overlaps_circle_rect(entity->position, entity->collider_radius, pool->min, pool->max))
+			{
+				SDL_assert(pool->alive_count < ENTITY_COUNT);
+				pool->entities[pool->alive_count++] = entity;
+			}
+		}
+	}	
 }
 
 // ********************************************************************************************************************
@@ -223,6 +311,22 @@ static void game_init(SDLContext* context, GameState* state)
 
 		state->frame_collisions = (EntityCollisionInfo*)SDL_malloc(MAX_COLLISIONS * sizeof(EntityCollisionInfo));
 		SDL_assert(state->frame_collisions);
+
+		for (size_t i = 0; i < ENTITY_POOLS; i++)
+		{
+			auto pool = &state->pools[i];
+			pool->alive_count = 0;
+			
+			int col = i % 2;   // 0 = left, 1 = right
+			int row = i / 2;   // 0 = top,  1 = bottom
+			float half_w = context->window_w / 2;
+			float half_h = context->window_h / 2;
+
+			pool->min.x = col * half_w;
+			pool->min.y = row * half_h;
+			pool->max.x = (col + 1) * half_w;
+			pool->max.y = (row + 1) * half_h;
+		}	
 	}
 
 	// texture atlasesw
@@ -234,9 +338,12 @@ static void game_reset(SDLContext* context, GameState* state)
 {
 	SDL_memset(state->entities, 0, ENTITY_COUNT * sizeof(Entity));
 	state->entities_alive_count = 0;
+	for (size_t i = 0; i < ENTITY_POOLS; i++) state->pools[i].alive_count = 0;
 
 	// entities
-	Entity* player = entity_create(state);
+	vec2f position = { context->window_w / 2, context->window_h / 2 };
+	constexpr float player_collider_radius = 16;
+	Entity* player = entity_create(state, position, player_collider_radius);
 	// we always have a player. This should also always be the first entity created, so it should never fail
 	SDL_assert(player);
 	player->position.x = (float)context->window_w / 2;
@@ -248,31 +355,41 @@ static void game_reset(SDLContext* context, GameState* state)
 		.tint = COLOR_WHITE,
 		.pivot = vec2f{ 0.5f, 0.5f }
 	};
-	player->collider_radius = 16;
+	player->collider_radius = player_collider_radius;
 	state->player = player;
 
 	// grid pattern
-	for(int i = 0; i < 9; ++i)
+	for(int i = 0; i < ENTITY_INITIAL_COUNT; ++i)
 	{
-		Entity* entity = entity_create(state);
+		vec2f coords = vec2f{ 1.5f + i % 16, 1.5f + i / 12};
+		vec2f size = vec2f{ 64, 64 };
+		vec2f position = mul_element_wise(size, coords);
+		constexpr float collider_radius = 32;
+		Entity* entity = entity_create(state, position, collider_radius);
 		if(!entity)
 		{
 			SDL_Log("[WARNING] too many entity spawned!");
 			break;
 		}
 		
-		vec2f coords = vec2f{ 1.5f + i % 3, 1.5f + i / 3};
-		entity->size = vec2f{ 64, 64 };
-		entity->position = mul_element_wise(entity->size,  coords);
+		entity->size = size;
+		entity->position = position;
 		entity->sprite = {
 			.texture = state->atlas,
 			.rect = SDL_FRect{ 0, 4*128, 128, 128 },
 			.tint = COLOR_WHITE,
 			.pivot = vec2f{ 0.5f, 0.5f }
 		};
-		entity->collider_radius = 32;
+		entity->collider_radius = collider_radius;
 	}
 }
+
+static inline vec2f vec_within_bounds(vec2f p, float min_x, float max_x, float min_y, float max_y)
+{
+	float x = SDL_min(max_x, SDL_max(p.x, min_x));
+	float y = SDL_min(max_y, SDL_max(p.y, min_y));
+	return vec2f{x,y};
+} 
 
 static void game_update(SDLContext* context, GameState* state)
 {
@@ -293,12 +410,16 @@ static void game_update(SDLContext* context, GameState* state)
 	for(int i = 0; i < state->entities_alive_count; ++i)
 	{
 		Entity* entity = &state->entities[i];
+		entity->position = vec_within_bounds(entity->position, 0, context->window_w, 0, context->window_h);
 		entity->sprite.tint = COLOR_WHITE;
 	}
 
 	collision_check(state);
 	if(DEBUG_separate_collisions)
+	{
 		collision_separate(state);
+		partition_separated_entities(state);
+	}
 }
 
 static void game_render(SDLContext* context, GameState* state)
@@ -321,6 +442,19 @@ static void game_render(SDLContext* context, GameState* state)
 		}
 	}
 		
+	for (size_t i = 0; i < ENTITY_POOLS; i++)
+	{
+		auto pool = &state->pools[i];
+		SDL_SetRenderDrawColor(context->renderer, 0xFF, 0x45, 0x00, 0xFF);
+		SDL_FRect rect = {
+			pool->min.x,
+			pool->min.y,
+			pool->max.x - pool->min.x,
+			pool->max.y - pool->min.y
+		};
+		SDL_RenderRect(context->renderer, &rect);
+	}
+
 	// debug window
 	SDL_SetRenderDrawColor(context->renderer, 0xFF, 0x00, 0xFF, 0xff);
 	SDL_RenderRect(context->renderer, NULL);
