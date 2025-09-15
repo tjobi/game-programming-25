@@ -41,6 +41,12 @@ struct Camera
 struct SDLContext
 {
 	SDL_Renderer* renderer;
+	float zoom;     // render zoom
+	float window_w;	// current window width after render zoom has been applied
+	float window_h;	// current window width after render zoom has been applied
+
+	float delta;    // in seconds
+	float uptime;   // in seconds
 
 	Camera camera;
 	union
@@ -73,6 +79,7 @@ struct SDLContext
 		};
 	};
 	vec2f mouse_pos;
+	float mouse_scroll;
 };
 
 inline SDL_FRect rect_global_to_screen(Camera* camera, SDL_FRect rect)
@@ -94,7 +101,7 @@ inline SDL_FRect rect_global_to_screen(Camera* camera, SDL_FRect rect)
 	return ret;
 }
 
-inline vec2f vec2f_global_to_screen(Camera* camera, vec2f p)
+inline vec2f point_global_to_screen(Camera* camera, vec2f p)
 {
 	vec2f ret = p;
 	ret = ret - camera->position;
@@ -106,7 +113,7 @@ inline vec2f vec2f_global_to_screen(Camera* camera, vec2f p)
 	return ret;
 }
 
-inline vec2f vec2f_screen_to_global(Camera* camera, vec2f p)
+inline vec2f point_screen_to_global(Camera* camera, vec2f p)
 {
 	vec2f ret = p;
 	ret = ret / camera->pixels_per_unit;

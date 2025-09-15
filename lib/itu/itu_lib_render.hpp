@@ -45,6 +45,7 @@ void itu_lib_render_draw_rect(SDL_Renderer* renderer, vec2f min, vec2f extents, 
 	SDL_RenderRect(renderer, &rect);
 }
 
+// NOTE: vertex count must be smaller than `MAX_CIRCLE_VERTICES` (defaults to 16, but you can change it if you need to)
 void itu_lib_render_draw_circle(SDL_Renderer* renderer, vec2f center, float radius, int vertex_count, color color)
 {
 	SDL_assert(vertex_count <= MAX_CIRCLE_VERTICES);

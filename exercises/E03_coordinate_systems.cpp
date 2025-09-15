@@ -1,28 +1,33 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define ITU_UNITY_BUILD
+
 #include <SDL3/SDL.h>
 #include <itu_lib_engine.hpp>
-#include <itu_sys_sprite_renderer.hpp>
 #include <itu_lib_render.hpp>
+#include <itu_lib_sprite.hpp>
 
-#define MEMORY_GAME_SIZE MB(512)
+#define ENABLE_DIAGNOSTICS
+
 #define TARGET_FRAMERATE SECONDS(1) / 60
 #define WINDOW_W         800
 #define WINDOW_H         600
 
 #define ENTITY_COUNT 4096
 
+#define PIXELS_PER_UNIT 128
+
+bool DEBUG_render_textures = true;
+bool DEBUG_render_outlines = true;
+
 struct Entity
 {
 	Sprite sprite;
-	
-	vec2f position;
-	vec2f size;
+	Transform transform;
 };
 
 struct GameState
 {
-	// shotcut references
+	// shortcut references
 	Entity* player;
 
 	// game-allocated memory
@@ -31,10 +36,7 @@ struct GameState
 
 	// SDL-allocated structures
 	SDL_Texture* atlas;
-
-	// timing info
-	float delta;
-	float elapsed;
+	SDL_Texture* bg;
 };
 
 static Entity* entity_create(GameState* state)
@@ -63,44 +65,67 @@ static void entity_destroy(GameState* state, Entity* entity)
 	*entity = state->entities[state->entities_alive_count];
 }
 
+
 static void game_init(SDLContext* context, GameState* state)
 {
 	// allocate memory
 	state->entities = (Entity*)SDL_calloc(ENTITY_COUNT, sizeof(Entity));
 	SDL_assert(state->entities);
 
+	// TODO allocate space for tile info (when we'll load those from file)
+
 	// texture atlases
 	state->atlas = texture_create(context, "data/kenney/simpleSpace_tilesheet_2.png", SDL_SCALEMODE_LINEAR);
-
+	state->bg    = texture_create(context, "data/kenney/prototype_texture_dark/texture_13.png", SDL_SCALEMODE_LINEAR);
 }
 
 static void game_reset(SDLContext* context, GameState* state)
 {
 	state->entities_alive_count = 0;
-
 	// entities
-	state->player = entity_create(state);
-	itu_lib_sprite_init(
-		&state->player->sprite,
-		state->atlas,
-		itu_lib_sprite_get_rect(0, 1, 128, 128)
-	);
-	state->player->sprite.pivot.x = 1;
+	{
+		Entity* bg = entity_create(state);
+		SDL_FRect sprite_rect = SDL_FRect{ 0, 0, 1024, 1024};
+		itu_lib_sprite_init(&bg->sprite, state->bg, sprite_rect);
+		bg->transform.scale = VEC2F_ONE * 8;
+	}
+
+	{
+		state->player = entity_create(state);
+		state->player->transform.position = VEC2F_ZERO;
+		state->player->transform.scale = VEC2F_ONE;
+		itu_lib_sprite_init(
+			&state->player->sprite,
+			state->atlas,
+			itu_lib_sprite_get_rect(0, 1, 128, 128)
+		);
+
+		// raise sprite a bit, so that the position concides with the center of the image
+		state->player->sprite.pivot.y = 0.3f;
+	}
 }
 
 static void game_update(SDLContext* context, GameState* state)
 {
-	vec2f mov = { 0 };
-	if(context->btn_isdown_up)
-		mov.y -= 1;
-	if(context->btn_isdown_down)
-		mov.y += 1;
-	if(context->btn_isdown_left)
-		mov.x -= 1;
-	if(context->btn_isdown_right)
-		mov.x += 1;
+	{
+		const float player_speed = 1;
+
+		Entity* entity = state->player;
+		vec2f mov = { 0 };
+		if(context->btn_isdown_up)
+			mov.y += 1;
+		if(context->btn_isdown_down)
+			mov.y -= 1;
+		if(context->btn_isdown_left)
+			mov.x -= 1;
+		if(context->btn_isdown_right)
+			mov.x += 1;
 	
-	state->player->position = state->player->position + mov * (128 * state->delta);
+		entity->transform.position = entity->transform.position + mov * (player_speed * context->delta);
+
+		// camera follows player
+		context->camera.position = entity->transform.position;
+	}
 }
 
 static void game_render(SDLContext* context, GameState* state)
@@ -108,20 +133,15 @@ static void game_render(SDLContext* context, GameState* state)
 	for(int i = 0; i < state->entities_alive_count; ++i)
 	{
 		Entity* entity = &state->entities[i];
-
 		// render texture
 		SDL_FRect rect_src = entity->sprite.rect;
 		SDL_FRect rect_dst;
-		rect_dst.w = rect_src.w;
-		rect_dst.h = rect_src.h;
-		rect_dst.x = entity->position.x;
-		rect_dst.y = entity->position.y;
-		SDL_RenderTexture(context->renderer, entity->sprite.texture, &rect_src, &rect_dst);
 
-		// debug texture rect
-		SDL_SetRenderDrawColor(context->renderer, 0xFF, 0xFF, 0xFF,0xFF);
-		SDL_RenderRect(context->renderer, &rect_dst);
-		itu_lib_render_draw_point(context->renderer, entity->position, 5, COLOR_YELLOW);
+		if(DEBUG_render_textures)
+			itu_lib_sprite_render(context, &entity->sprite, &entity->transform);
+
+		if(DEBUG_render_outlines)
+			itu_lib_sprite_render_debug(context, &entity->sprite, &entity->transform);
 	}
 
 	// debug window
@@ -136,11 +156,25 @@ int main(void)
 	SDLContext context = { 0 };
 	GameState  state   = { 0 };
 
-	
-	float renderer_zoom_factor = 1;
+	context.window_w = WINDOW_W;
+	context.window_h = WINDOW_H;
 
-	SDL_CreateWindowAndRenderer("L03 - Coordinate Systems", WINDOW_W, WINDOW_H, 0, &window, &context.renderer);
-	SDL_SetRenderVSync(context.renderer, 1);
+	SDL_CreateWindowAndRenderer("E03 - Coordinate Systems", WINDOW_W, WINDOW_H, 0, &window, &context.renderer);
+	SDL_SetRenderDrawBlendMode(context.renderer, SDL_BLENDMODE_BLEND);
+
+	// increase the zoom to make debug text more legible
+	// (ie, on the class projector, we will usually use 2)
+	{
+		context.zoom = 1;
+		context.window_w /= context.zoom;
+		context.window_h /= context.zoom;
+		SDL_SetRenderScale(context.renderer, context.zoom, context.zoom);
+	}
+
+	context.camera.size.x = context.window_w / PIXELS_PER_UNIT;
+	context.camera.size.y = context.window_h / PIXELS_PER_UNIT;
+	context.camera.zoom = 1;
+	context.camera.pixels_per_unit = PIXELS_PER_UNIT;
 
 	game_init(&context, &state);
 	game_reset(&context, &state);
@@ -178,6 +212,17 @@ int main(void)
 						case SDLK_E: sdl_input_key_process(&context, BTN_TYPE_ACTION_1, &event);  break;
 						case SDLK_SPACE: sdl_input_key_process(&context, BTN_TYPE_SPACE, &event); break;
 					}
+
+					// debug keys
+					if(event.key.down && !event.key.repeat)
+					{
+						switch(event.key.key)
+						{
+							case SDLK_TAB: game_reset(&context, &state); break;
+							case SDLK_F1: DEBUG_render_textures = !DEBUG_render_textures; break;
+							case SDLK_F2: DEBUG_render_outlines = !DEBUG_render_outlines; break;
+						}
+					}
 					break;
 			}
 		}
@@ -197,15 +242,25 @@ int main(void)
 		SDL_GetCurrentTime(&walltime_frame_end);
 		elapsed_frame = walltime_frame_end - walltime_frame_beg;
 		
-		SDL_SetRenderDrawColor(context.renderer, 0xFF, 0xFF, 0xFF, 0xFF);
-		SDL_RenderDebugTextFormat(context.renderer, 10, 10, "work: %9.6f ms/f", (float)elapsed_work  / (float)MILLIS(1));
-		SDL_RenderDebugTextFormat(context.renderer, 10, 20, "tot : %9.6f ms/f", (float)elapsed_frame / (float)MILLIS(1));
+#ifdef ENABLE_DIAGNOSTICS
+		{
+			SDL_SetRenderDrawColor(context.renderer, 0x0, 0x00, 0x00, 0xCC);
+			SDL_FRect rect = SDL_FRect{ 5, 5, 225, 55 };
+			SDL_RenderFillRect(context.renderer, &rect);
 
+			SDL_SetRenderDrawColor(context.renderer, 0xFF, 0xFF, 0xFF, 0xFF);
+			SDL_RenderDebugTextFormat(context.renderer, 10, 10, "work: %9.6f ms/f", (float)elapsed_work  / (float)MILLIS(1));
+			SDL_RenderDebugTextFormat(context.renderer, 10, 20, "tot : %9.6f ms/f", (float)elapsed_frame / (float)MILLIS(1));
+			SDL_RenderDebugTextFormat(context.renderer, 10, 30, "[TAB] reset ");
+			SDL_RenderDebugTextFormat(context.renderer, 10, 40, "[F1]  render textures   %s", DEBUG_render_textures   ? " ON" : "OFF");
+			SDL_RenderDebugTextFormat(context.renderer, 10, 50, "[F2]  render outlines   %s", DEBUG_render_outlines   ? " ON" : "OFF");
+		}
+#endif
 		// render
 		SDL_RenderPresent(context.renderer);
 
-		state.delta = (float)elapsed_frame / (float)SECONDS(1);
-		state.elapsed += state.delta;
+		context.delta = (float)elapsed_frame / (float)SECONDS(1);
+		context.uptime += context.delta;
 		walltime_frame_beg = walltime_frame_end;
 	}
 }
