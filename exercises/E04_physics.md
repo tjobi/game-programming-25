@@ -81,4 +81,4 @@ Adding dimensions to our bodies is not trivial tho. Amongs other things, we woul
 - allow forces to be applied at arbitrary points (instead on the center of mass, like we simplified so far)
 - compute how much of a force will translate on a velocity change, and how much will translate to angular velocity change, which bring us to...
 - adding angular velocity and torque support
-And more. If you want to tackle this challenge, Allen chou has an [excellent series](TODO) that covers most of the basics.
+And more. If you want to tackle this challenge, Allen chou has an [excellent series](https://allenchou.net/2013/12/game-physics-motion-dynamics-implementations/) that covers most of the basics.
