@@ -6,9 +6,11 @@
 #ifndef ITU_LIB_ENGINE_HPP
 #define ITU_LIB_ENGINE_HPP
 
+#ifndef ITU_UNITY_BUILD
 #include <SDL3/SDL.h>
 #include <stb_image.h>
 #include <itu_common.hpp>
+#endif
 
 enum BtnType
 {

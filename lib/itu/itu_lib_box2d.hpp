@@ -1,8 +1,10 @@
 #ifndef ITU_LIB_BOX2D_HPP
 #define ITU_LIB_BOX2D_HPP
 
+#ifndef ITU_UNITY_BUILD
 #include <box2d/box2d.h>
 #include <itu_lib_engine.hpp>
+#endif
 
 struct b2BodyId;
 struct b2WorldId;
@@ -18,8 +20,8 @@ void fn_box2d_wrapper_draw_polygon(b2Transform transform, const b2Vec2* vertices
 	float b = (float)((color & 0x0000FF))       / 255.0f;
 	SDL_FColor color_fill = {r, g, b, 0.25f};
 
-	SDL_FPoint vs_outline[vertexCount+1];
-	SDL_Vertex vs[vertexCount];
+	SDL_FPoint vs_outline[B2_MAX_POLYGON_VERTICES+1];
+	SDL_Vertex vs[B2_MAX_POLYGON_VERTICES];
 	SDL_zeroa(vs);
 	
 	for (int i = 0; i < vertexCount; ++i)
@@ -39,7 +41,7 @@ void fn_box2d_wrapper_draw_polygon(b2Transform transform, const b2Vec2* vertices
 	vs_outline[vertexCount].y = vs_outline[0].y;
 
 	int indices_count = (vertexCount - 2)*3;
-	int indices[indices_count];
+	int indices[B2_MAX_POLYGON_VERTICES*3];
 	int c = 0;
 	for (int i = 2; i < vertexCount; ++i)
 	{

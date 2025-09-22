@@ -11,9 +11,11 @@
 #ifndef ITU_LIB_RENDER_HPP
 #define ITU_LIB_RENDER_HPP
 
+#ifndef ITU_UNITY_BUILD
 #include <SDL3/SDL_render.h>
 #include <itu_common.hpp>
 #include <itu_lib_engine.hpp>
+#endif
 
 #define MAX_CIRCLE_VERTICES 16
 

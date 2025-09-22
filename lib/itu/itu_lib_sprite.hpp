@@ -1,7 +1,9 @@
 #ifndef ITU_LIB_SPRITE_HPP
 #define ITU_LIB_SPRITE_HPP
 
+#ifndef ITU_UNITY_BUILD
 #include <itu_lib_engine.hpp>
+#endif
 
 struct Sprite
 {

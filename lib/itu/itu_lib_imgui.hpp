@@ -1,10 +1,11 @@
 #ifndef ITU_LIB_IMGUI_HPP
 #define ITU_LIB_IMGUI_HPP
 
+#ifndef ITU_UNITY_BUILD
 #include <imgui/imgui.h>
 #include <imgui/imgui_impl_sdl3.h>
 #include <imgui/imgui_impl_sdlrenderer3.h>
-
+#endif
 
 // hello
 void itu_lib_imgui_setup(SDL_Window* window, SDLContext* context);
