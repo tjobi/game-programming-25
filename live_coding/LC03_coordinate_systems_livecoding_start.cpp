@@ -84,7 +84,7 @@ static void game_reset(SDLContext* context, GameState* state)
 	{
 		Entity* bg = entity_create(state);
 		SDL_FRect sprite_rect = SDL_FRect{ 0, 0, 1024, 1024};
-		bg->scale = VEC2F_ONE;
+		bg->scale = VEC2F_ONE * 8;
 		itu_lib_sprite_init(&bg->sprite, state->bg, sprite_rect);
 	}
 
@@ -102,19 +102,29 @@ static void game_update(SDLContext* context, GameState* state)
 {
 	vec2f mov = { 0 };
 	if(context->btn_isdown_up)
-		mov.y -= 1;
-	if(context->btn_isdown_down)
 		mov.y += 1;
+	if(context->btn_isdown_down)
+		mov.y -= 1;
 	if(context->btn_isdown_left)
 		mov.x -= 1;
 	if(context->btn_isdown_right)
 		mov.x += 1;
 	
-	state->player->position = state->player->position + mov * (128 * context->delta);
+	state->player->position = state->player->position + mov * (1 * context->delta);
+
+
+
+	// camera follows player
+	context->camera.position = state->player->position;
 }
 
 static void game_render(SDLContext* context, GameState* state)
 {
+	vec2f camera_position = context->camera.position;
+	vec2f camera_size = context->camera.size;
+	float camera_zoom = context->camera.zoom;
+	float camera_pixels_per_unit = context->camera.pixels_per_unit;
+
 	for(int i = 0; i < state->entities_alive_count; ++i)
 	{
 		Entity* entity = &state->entities[i];
@@ -122,11 +132,32 @@ static void game_render(SDLContext* context, GameState* state)
 		// render texture
 		SDL_FRect rect_src = entity->sprite.rect;
 		SDL_FRect rect_dst;
-		rect_dst.w = rect_src.w;
+		/*rect_dst.w = rect_src.w;
 		rect_dst.h = rect_src.h;
 		rect_dst.x = entity->position.x;
-		rect_dst.y = entity->position.y;
+		rect_dst.y = entity->position.y;*/
 
+		// handle our frame of references
+		{
+			vec2f pos = entity->position;
+			vec2f scale = entity->scale;
+			vec2f size_camera = scale * camera_zoom;
+
+			// from local to global space
+			pos = pos - mul_element_wise(scale, entity->sprite.pivot);
+
+			// from global to view
+			pos = pos - camera_position;
+
+			// from view to screen space
+			pos.y = camera_size.y - pos.y - size_camera.y;
+
+			// assemble oll our data for SDL
+			rect_dst.w = camera_pixels_per_unit * scale.x;
+			rect_dst.h = camera_pixels_per_unit * scale.y;
+			rect_dst.x = camera_pixels_per_unit * pos.x + camera_size.x / 2;
+			rect_dst.y = camera_pixels_per_unit * pos.y + camera_size.y / 2;
+		}
 
 		if(DEBUG_render_textures)
 			SDL_RenderTexture(context->renderer, entity->sprite.texture, &rect_src, &rect_dst);
@@ -165,6 +196,11 @@ int main(void)
 		SDL_SetRenderScale(context.renderer, context.zoom, context.zoom);
 	}
 
+	context.camera.size.x = context.window_w;
+	context.camera.size.y = context.window_h;
+	context.camera.zoom = 1;
+	context.camera.position = VEC2F_ZERO;
+	context.camera.pixels_per_unit = 128;
 
 	game_init(&context, &state);
 	game_reset(&context, &state);

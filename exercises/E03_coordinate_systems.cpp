@@ -1,6 +1,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define ITU_UNITY_BUILD
 
+#define TEXTURE_PIXELS_PER_UNIT 128
+#define CAMERA_PIXELS_PER_UNIT  128
+
 #include <SDL3/SDL.h>
 #include <itu_lib_engine.hpp>
 #include <itu_lib_render.hpp>
@@ -249,6 +252,7 @@ int main(void)
 	{
 		// input
 		SDL_Event event;
+		sdl_input_clear(&context);
 		while(SDL_PollEvent(&event))
 		{
 			switch(event.type)
@@ -256,7 +260,7 @@ int main(void)
 				case SDL_EVENT_QUIT:
 					quit = true;
 					break;
-					
+
 				case SDL_EVENT_KEY_DOWN:
 				case SDL_EVENT_KEY_UP:
 					switch(event.key.key)
