@@ -16,9 +16,9 @@
 #define WINDOW_W 800
 #define WINDOW_H 600
 
-#define ENTITY_COUNT 128
-#define ENTITY_INITIAL_COUNT 120
-#define MAX_COLLISIONS 1024   // num max collisions per frame
+#define ENTITY_COUNT 512
+#define ENTITY_INITIAL_COUNT 128
+#define MAX_COLLISIONS (ENTITY_COUNT*6)   // num max collisions per frame
 #define ENTITY_POOLS 4
 
 bool DEBUG_separate_collisions   = true;
@@ -562,6 +562,7 @@ int main(void)
 			SDL_RenderDebugTextFormat(context.renderer, 10, 40, "[F1]  collisions        %s", DEBUG_separate_collisions   ? " ON" : "OFF");
 			SDL_RenderDebugTextFormat(context.renderer, 10, 50, "[F2]  render colliders  %s", DEBUG_render_colliders      ? " ON" : "OFF");
 			SDL_RenderDebugTextFormat(context.renderer, 10, 60, "[F3]  render tex border %s", DEBUG_render_texture_border ? " ON" : "OFF");
+			SDL_RenderDebugTextFormat(context.renderer, 10, 70, "entities:               %i", ENTITY_INITIAL_COUNT);
 		}
 #endif
 

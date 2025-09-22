@@ -5,7 +5,6 @@
 #include <itu_lib_engine.hpp>
 #include <itu_lib_render.hpp>
 #include <itu_lib_sprite.hpp>
-#include <itu_lib_overlaps.hpp>
 
 #define ENABLE_DIAGNOSTICS
 
@@ -15,25 +14,15 @@
 
 #define ENTITY_COUNT 4096
 
-#define PIXELS_PER_UNIT 16
-
-#define EX4_USE_CENTER false
-
 bool DEBUG_render_textures = true;
 bool DEBUG_render_outlines = true;
-
-static void get_mouse_coordinates(SDLContext* context, vec2f* mouse_pos_screen, vec2f* mouse_pos_world, vec2f* mouse_pos_camera)
-{
-	SDL_GetMouseState(&mouse_pos_screen->x, &mouse_pos_screen->y);
-	*mouse_pos_world = point_screen_to_global(&context->camera, *mouse_pos_screen);
-	*mouse_pos_camera = (*mouse_pos_world - context->camera.position);
-	return;
-}
 
 struct Entity
 {
 	Sprite sprite;
-	Transform transform;
+	
+	vec2f position;
+	vec2f scale;
 };
 
 struct GameState
@@ -70,12 +59,11 @@ static Entity* entity_create(GameState* state)
 static void entity_destroy(GameState* state, Entity* entity)
 {
 	// NOTE: here we want to fail hard, nobody should pass us a pointer not gotten from `entity_create()`
-	SDL_assert(entity < state->entities ||entity > state->entities + ENTITY_COUNT);
+	SDL_assert(entity < state->entities || entity > state->entities + ENTITY_COUNT);
 
 	--state->entities_alive_count;
 	*entity = state->entities[state->entities_alive_count];
 }
-
 
 static void game_init(SDLContext* context, GameState* state)
 {
@@ -83,104 +71,46 @@ static void game_init(SDLContext* context, GameState* state)
 	state->entities = (Entity*)SDL_calloc(ENTITY_COUNT, sizeof(Entity));
 	SDL_assert(state->entities);
 
-	// TODO allocate space for tile info (when we'll load those from file)
-
 	// texture atlases
-	// state->atlas = texture_create(context, "data/kenney/simpleSpace_tilesheet_2.png", SDL_SCALEMODE_LINEAR);
-	//Nearest neighbour for pixel art
-	state->atlas = texture_create(context, "data/kenney/tiny_dungeon_packed.png", SDL_SCALEMODE_NEAREST);
+	state->atlas = texture_create(context, "data/kenney/simpleSpace_tilesheet_2.png", SDL_SCALEMODE_LINEAR);
 	state->bg    = texture_create(context, "data/kenney/prototype_texture_dark/texture_13.png", SDL_SCALEMODE_LINEAR);
 }
 
 static void game_reset(SDLContext* context, GameState* state)
 {
 	state->entities_alive_count = 0;
+
 	// entities
 	{
-		const int size = 4;
-		//let's create 8x8 map of tiles xD
-		for (int i = -size; i < size; i++)
-		{
-			for (int j = -size; j < size; j++)
-			{
-				Entity* tile = entity_create(state);
-				//random tile from the tileset
-				int tile_x = SDL_rand(12);
-				int tile_y = SDL_rand(5);
-				SDL_FRect sprite_rect = itu_lib_sprite_get_rect(tile_x, tile_y, 16, 16);
-				itu_lib_sprite_init(&tile->sprite, state->atlas, sprite_rect);
-				tile->transform.position = vec2f{ (float)i, (float)j };
-				tile->transform.scale = VEC2F_ONE;
-			}
-		}
+		Entity* bg = entity_create(state);
+		SDL_FRect sprite_rect = SDL_FRect{ 0, 0, 1024, 1024};
+		bg->scale = VEC2F_ONE;
+		itu_lib_sprite_init(&bg->sprite, state->bg, sprite_rect);
 	}
 
-	{
-		state->player = entity_create(state);
-		state->player->transform.position = VEC2F_ZERO;
-		state->player->transform.scale = VEC2F_ONE;
-		itu_lib_sprite_init(
-			&state->player->sprite,
-			state->atlas,
-			itu_lib_sprite_get_rect(0, 7, 16, 16)
-		);
-
-		// raise sprite a bit, so that the position concides with the center of the image
-		state->player->sprite.pivot.y = 0.3f;
-	}
+	state->player = entity_create(state);
+	state->player->position = VEC2F_ZERO;
+	state->player->scale = VEC2F_ONE;
+	itu_lib_sprite_init(
+		&state->player->sprite,
+		state->atlas,
+		itu_lib_sprite_get_rect(0, 1, 128, 128)
+	);
 }
 
 static void game_update(SDLContext* context, GameState* state)
 {
-	{
-		const float player_speed = 1;
-
-		Entity* entity = state->player;
-		vec2f mov = { 0 };
-		if(context->btn_isdown_up)
-			mov.y += 1;
-		if(context->btn_isdown_down)
-			mov.y -= 1;
-		if(context->btn_isdown_left)
-			mov.x -= 1;
-		if(context->btn_isdown_right)
-			mov.x += 1;
-		
-		entity->transform.position = entity->transform.position + mov * (player_speed * context->delta);
-
-		// camera follows player
-		context->camera.position = entity->transform.position;
-
-		// let's add a tint to the entity under the mouse cursor and under the player :)
-		vec2f mouse_pos_screen, mouse_pos_world, mouse_pos_camera;
-		get_mouse_coordinates(context, &mouse_pos_screen, &mouse_pos_world, &mouse_pos_camera);
-		
-#if EX4_USE_CENTER
-		vec2f player_pos = entity->transform.position;
-#else
-		vec2f player_pos_min = entity->transform.position - mul_element_wise(entity->sprite.pivot, entity->transform.scale);
-		vec2f player_pos_max = player_pos_min + entity->transform.scale;
-#endif
-
-		for (size_t i = 0; i < ENTITY_COUNT; i++)
-		{
-			Entity* e = &state->entities[i];
-			if(e == state->player) continue;
-			
-			vec2f entity_pos_min = e->transform.position - mul_element_wise(e->sprite.pivot, e->transform.scale);
-			vec2f entity_pos_max = entity_pos_min + e->transform.scale;
-			auto overlaps_mouse = itu_lib_overlaps_point_rect(mouse_pos_world, entity_pos_min, entity_pos_max);
-			e->sprite.tint = COLOR_WHITE;
-			if (overlaps_mouse) e->sprite.tint = COLOR_RED;
-
-#if EX4_USE_CENTER
-			else if(itu_lib_overlaps_point_rect(player_pos, entity_pos_min, entity_pos_max)) e->sprite.tint = COLOR_GREEN;
-#else
-			else if (itu_lib_overlaps_rect_rect(player_pos_min, player_pos_max, entity_pos_min, entity_pos_max)) e->sprite.tint = COLOR_GREEN;
-#endif		
-		}
-		
-	}
+	vec2f mov = { 0 };
+	if(context->btn_isdown_up)
+		mov.y -= 1;
+	if(context->btn_isdown_down)
+		mov.y += 1;
+	if(context->btn_isdown_left)
+		mov.x -= 1;
+	if(context->btn_isdown_right)
+		mov.x += 1;
+	
+	state->player->position = state->player->position + mov * (128 * context->delta);
 }
 
 static void game_render(SDLContext* context, GameState* state)
@@ -188,15 +118,25 @@ static void game_render(SDLContext* context, GameState* state)
 	for(int i = 0; i < state->entities_alive_count; ++i)
 	{
 		Entity* entity = &state->entities[i];
+
 		// render texture
 		SDL_FRect rect_src = entity->sprite.rect;
 		SDL_FRect rect_dst;
+		rect_dst.w = rect_src.w;
+		rect_dst.h = rect_src.h;
+		rect_dst.x = entity->position.x;
+		rect_dst.y = entity->position.y;
+
 
 		if(DEBUG_render_textures)
-			itu_lib_sprite_render(context, &entity->sprite, &entity->transform);
+			SDL_RenderTexture(context->renderer, entity->sprite.texture, &rect_src, &rect_dst);
 
+		// debug texture rect
 		if(DEBUG_render_outlines)
-			itu_lib_sprite_render_debug(context, &entity->sprite, &entity->transform);
+		{
+			itu_lib_render_draw_rect(context->renderer, vec2f { rect_dst.x, rect_dst.y}, vec2f { rect_dst.w, rect_dst.h}, COLOR_WHITE);
+			itu_lib_render_draw_point(context->renderer, entity->position, 5, COLOR_YELLOW);
+		}
 	}
 
 	// debug window
@@ -215,8 +155,7 @@ int main(void)
 	context.window_h = WINDOW_H;
 
 	SDL_CreateWindowAndRenderer("E03 - Coordinate Systems", WINDOW_W, WINDOW_H, 0, &window, &context.renderer);
-	SDL_SetRenderDrawBlendMode(context.renderer, SDL_BLENDMODE_BLEND);
-
+	
 	// increase the zoom to make debug text more legible
 	// (ie, on the class projector, we will usually use 2)
 	{
@@ -226,12 +165,6 @@ int main(void)
 		SDL_SetRenderScale(context.renderer, context.zoom, context.zoom);
 	}
 
-	context.camera.size.x = context.window_w / PIXELS_PER_UNIT;
-	context.camera.size.y = context.window_h / PIXELS_PER_UNIT;
-	//context.camera.zoom = 1;
-	//Zoom to 4, beause some of the library code is wrong?
-	context.camera.zoom = 4;
-	context.camera.pixels_per_unit = PIXELS_PER_UNIT;
 
 	game_init(&context, &state);
 	game_reset(&context, &state);
@@ -302,7 +235,7 @@ int main(void)
 #ifdef ENABLE_DIAGNOSTICS
 		{
 			SDL_SetRenderDrawColor(context.renderer, 0x0, 0x00, 0x00, 0xCC);
-			SDL_FRect rect = SDL_FRect{ 5, 5, 300, 85 };
+			SDL_FRect rect = SDL_FRect{ 5, 5, 225, 55 };
 			SDL_RenderFillRect(context.renderer, &rect);
 
 			SDL_SetRenderDrawColor(context.renderer, 0xFF, 0xFF, 0xFF, 0xFF);
@@ -311,14 +244,9 @@ int main(void)
 			SDL_RenderDebugTextFormat(context.renderer, 10, 30, "[TAB] reset ");
 			SDL_RenderDebugTextFormat(context.renderer, 10, 40, "[F1]  render textures   %s", DEBUG_render_textures   ? " ON" : "OFF");
 			SDL_RenderDebugTextFormat(context.renderer, 10, 50, "[F2]  render outlines   %s", DEBUG_render_outlines   ? " ON" : "OFF");
-
-			vec2f mouse_pos_screen, mouse_pos_world, mouse_pos_camera;
-			get_mouse_coordinates(&context, &mouse_pos_screen, &mouse_pos_world, &mouse_pos_camera);
-			SDL_RenderDebugTextFormat(context.renderer, 10, 60, "mouse (screen): %9.3f, %9.3f", mouse_pos_screen.x, mouse_pos_screen.y);
-			SDL_RenderDebugTextFormat(context.renderer, 10, 70, "mouse (world):  %9.3f, %9.3f", mouse_pos_world.x, mouse_pos_world.y);
-			SDL_RenderDebugTextFormat(context.renderer, 10, 80, "mouse (camera): %9.3f, %9.3f", mouse_pos_camera.x, mouse_pos_camera.y);
 		}
 #endif
+
 		// render
 		SDL_RenderPresent(context.renderer);
 
