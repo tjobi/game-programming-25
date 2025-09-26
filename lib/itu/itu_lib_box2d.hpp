@@ -9,6 +9,9 @@
 struct b2BodyId;
 struct b2WorldId;
 
+
+#endif // ITU_LIB_BOX2D_HPP
+
 #if (defined ITU_LIB_BOX2D_IMPLEMENTATION) || (defined ITU_UNITY_BUILD)
 
 void fn_box2d_wrapper_draw_polygon(b2Transform transform, const b2Vec2* vertices, int vertexCount, float radius, b2HexColor color, void* context)
@@ -82,5 +85,3 @@ void fn_box2d_wrapper_draw_circle(b2Transform transform, float radius, b2HexColo
 	fn_box2d_wrapper_draw_polygon(transform, vertices, 8, radius, b2_color, context);
 }
 #endif // (defined ITU_LIB_BOX2D_IMPLEMENTATION) || (define ITU_UNITY_BUILD)
-
-#endif // ITU_LIB_BOX2D_HPP

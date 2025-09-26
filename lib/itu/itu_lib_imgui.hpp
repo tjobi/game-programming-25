@@ -7,7 +7,6 @@
 #include <imgui/imgui_impl_sdlrenderer3.h>
 #endif
 
-// hello
 void itu_lib_imgui_setup(SDL_Window* window, SDLContext* context);
 
 // default imgui event handler. Call this before doing your own processing of the SDL event

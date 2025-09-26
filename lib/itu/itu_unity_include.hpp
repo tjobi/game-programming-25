@@ -2,10 +2,13 @@
 // include this only once, and no other header
 
 #define ITU_UNITY_BUILD
+
+#define STB_DS_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
 
 #include <SDL3/SDL.h>
 
+#include <stb_ds.h>
 #include <stb_image.h>
 
 #include <imgui/imgui.h>

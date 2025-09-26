@@ -5,12 +5,14 @@
 
 #define ENABLE_DIAGNOSTICS
 
-#define TARGET_FRAMERATE_NS    SECONDS(1) / 60
-// NOTE: we are compouding precision errors here (convert seconds into nsecs, back to seconds),
-//       but specifying what you want once and expressing everything else in function of it avoids mismatching
-//       A more advanced implementation would have independent loop frequencies for game and physics and synch them under the hood
-//       (you can try it in exercise 04.2, will be discussed in class during exercise review)
-#define TARGET_FRAMERATE_SECS  NS_TO_SECONDS(TARGET_FRAMERATE_NS)
+// rendering framerate
+#define TARGET_FRAMERATE_NS    SECONDS(1) / 200
+
+// physics timestep
+#define PHYSICS_TIMESTEP_NSECS  SECONDS(1) / 60
+#define PHYSICS_TIMESTEP_SECS   NS_TO_SECONDS(PHYSICS_TIMESTEP_NSECS)
+#define PHYSICS_MAX_TIMESTEPS_PER_FRAME 4
+#define PHYSICS_MAX_CONTACTS_PER_ENTITY 16
 
 #define WINDOW_W         800
 #define WINDOW_H         600
@@ -23,20 +25,14 @@
 #define COLLISION_FILTER_CLUTTER        0b00100
 #define COLLISION_FILTER_CLUTTER_SENSOR 0b01000
 
-enum SimulationType
-{
-	SIMULATION_TYPE_DYNAMIC,
-	SIMULATION_TYPE_KINEMATIC,
-};
-
 bool DEBUG_render_textures = true;
 bool DEBUG_render_outlines = false;
 bool DEBUG_physics = true;
-int DEBUG_simulation_type_current = 0;
-const char* const DEBUG_simulation_types[] = 
-{
-	"Dynamic", "\"Kinematic\""
-};
+bool DEBUG_physics_fixed_step = true;
+
+int DEBUG_physics_steps_per_frame_counter;
+float DEBUG_delay_physics_ms;
+float DEBUG_delay_frame_ms;
 
 b2DebugDraw debug_draw;
 
@@ -63,10 +59,6 @@ typedef struct PlayerData
 	float v_x; // initial foot speed (for current jump)
 	float t_h; // jump duration (for current jump)
 } PlayerData;
-
-static float player_dynamic_gravity = -9.8f;
-static float player_dynamic_jump_impulse = 3;
-static float player_dynamic_mov_force = 10;
 
 struct GameState
 {
@@ -157,9 +149,7 @@ static void game_reset(SDLContext* context, GameState* state)
 	if(b2World_IsValid(state->world_id))
 		b2DestroyWorld(state->world_id);
 	b2WorldDef def_world = b2DefaultWorldDef();
-	def_world.gravity.y = DEBUG_simulation_type_current == SIMULATION_TYPE_KINEMATIC
-		? GRAVITY
-		: player_dynamic_gravity;
+	def_world.gravity.y = GRAVITY;
 	state->world_id = b2CreateWorld(&def_world);
 
 	state->entities_alive_count = 0;
@@ -275,107 +265,63 @@ static void game_update(SDLContext* context, GameState* state)
 	{
 		Entity* player = state->player;
 		PlayerData* data = &state->player_data;
-
-		switch(DEBUG_simulation_type_current)
+		vec2f velocity = player->velocity;
+		if(data->grounded)
 		{
-			case SIMULATION_TYPE_DYNAMIC:
-			{
-				vec2f force = VEC2F_ZERO;
-				vec2f impulse = VEC2F_ZERO;
-				if(data->grounded)
-				{
-					if(context->btn_isdown[BTN_TYPE_LEFT])
-		 				force.x = -player_dynamic_mov_force;
-		 			if(context->btn_isdown[BTN_TYPE_RIGHT])
-		 				force.x = player_dynamic_mov_force;
-					if(context->btn_isdown[BTN_TYPE_SPACE])
-						impulse.y = player_dynamic_jump_impulse;
-				}
-			
-				b2Body_ApplyForceToCenter(player->body_id, value_cast(b2Vec2, force), true);
-				b2Body_ApplyLinearImpulseToCenter(player->body_id, value_cast(b2Vec2, impulse), true);
-				break;
-			}
-			case SIMULATION_TYPE_KINEMATIC:
-			{
-				vec2f velocity = player->velocity;
-				if(data->grounded)
-				{
-					if(context->btn_isdown[BTN_TYPE_LEFT])
-		 	 	 		velocity.x = -data->v_x;
-		 			else if(context->btn_isdown[BTN_TYPE_RIGHT])
-		 	 	 		velocity.x = data->v_x;
-					else
-			 	 		velocity.x = 0;
+			if(context->btn_isdown[BTN_TYPE_LEFT])
+		 		velocity.x = -data->v_x;
+		 	else if(context->btn_isdown[BTN_TYPE_RIGHT])
+		 		velocity.x = data->v_x;
+			else
+				velocity.x = 0;
 				 
-					if(context->btn_isjustpressed[BTN_TYPE_SPACE])
-					{
-				 		compute_jump_parameters(data);
-				 		velocity.y = state->player_data.v_0;
-					}
-				}
-				else
-				{
-					if(velocity.y > 0)
-				 		velocity.y += state->player_data.g * context->delta;
-					else
-				 		velocity.y += state->player_data.g * context->delta * 3;
-				}
-
-		 		b2Body_SetLinearVelocity(player->body_id, value_cast(b2Vec2, velocity));
-				break;
+			if(context->btn_isjustpressed[BTN_TYPE_SPACE])
+			{
+				compute_jump_parameters(data);
+				velocity.y = state->player_data.v_0;
 			}
 		}
+		else
+		{
+			if(velocity.y > 0)
+				velocity.y += state->player_data.g * context->delta;
+			else
+				velocity.y += state->player_data.g * context->delta * 3;
+		}
+
+		b2Body_SetLinearVelocity(player->body_id, value_cast(b2Vec2, velocity));
 	}
+}
 
-	b2World_Step(state->world_id, TARGET_FRAMERATE_SECS, 4);
-
-	// entities
-	for(int i = 0; i < state->entities_alive_count; ++i)
-	{
-		Entity* entity = &state->entities[i];
-		b2Vec2 physics_vel = b2Body_GetLinearVelocity(entity->body_id);
-		b2Vec2 physics_pos = b2Body_GetPosition(entity->body_id);
-		b2Rot  physics_rot = b2Body_GetRotation(entity->body_id);
-		entity->velocity = value_cast(vec2f, physics_vel); 
-		entity->transform.position = value_cast(vec2f, physics_pos);
-		entity->transform.rotation = b2Rot_GetAngle(physics_rot);
-	}
-
+static void game_update_post_physics(SDLContext* context, GameState* state)
+{
 	// player
 	{
 		Entity* entity = state->player;
 		PlayerData* data = &state->player_data;
-
+	
 		
-		 // NOTE: quick hack because I forgot a VLA in the code again. Exercise solution will do this nicely
-		 static int contad_data_size = 16;
-		 static b2ContactData* contact_data = (b2ContactData*)SDL_calloc(16, sizeof(b2ContactData));
+		static b2ContactData* contact_data = (b2ContactData*)SDL_calloc(PHYSICS_MAX_CONTACTS_PER_ENTITY, sizeof(b2ContactData));
+	
+		int contacts = b2Body_GetContactCapacity(entity->body_id);
+		SDL_assert(contacts <= PHYSICS_MAX_CONTACTS_PER_ENTITY && "Max number of contacts exceeded. If this is not an error, increase the ");
 
-		 int contacts = b2Body_GetContactCapacity(entity->body_id);
-
-		 if(contacts > contad_data_size)
-		 {
-			 contad_data_size = contacts;
-			 contact_data = (b2ContactData*)SDL_realloc(contact_data, contad_data_size * sizeof(b2ContactData));
-		 }
-		 int actual_contacts = b2Body_GetContactData(state->player->body_id, contact_data, contacts);
+		int actual_contacts = b2Body_GetContactData(state->player->body_id, contact_data, contacts);
 		 
-		 data->grounded = false;
-		 for(int i = 0; i < actual_contacts; ++i)
-		 {
-		 	b2Filter filter_a = b2Shape_GetFilter(contact_data[i].shapeIdA);
-		 	b2Filter filter_b = b2Shape_GetFilter(contact_data[i].shapeIdB);
-		 	if(filter_a.categoryBits & COLLISION_FILTER_GROUND)
+		data->grounded = false;
+		for(int i = 0; i < actual_contacts; ++i)
+		{
+			b2Filter filter_a = b2Shape_GetFilter(contact_data[i].shapeIdA);
+			if(filter_a.categoryBits & COLLISION_FILTER_GROUND)
 		 		data->grounded = true;
-		 }
+		}
 	}
 
 	// world
-	b2SensorEvents worl_sensor_events = b2World_GetSensorEvents(state->world_id);
-	for(int i = 0; i < worl_sensor_events.beginCount; ++i)
+	b2SensorEvents world_sensor_events = b2World_GetSensorEvents(state->world_id);
+	for(int i = 0; i < world_sensor_events.beginCount; ++i)
 	{
-		b2SensorBeginTouchEvent* sensor_event = &worl_sensor_events.beginEvents[i];
+		b2SensorBeginTouchEvent* sensor_event = &world_sensor_events.beginEvents[i];
 		b2Vec2 direction = b2Vec2 { 0, 1 };
 
 		float vel_sq = length_sq(state->player->velocity);
@@ -384,14 +330,14 @@ static void game_update(SDLContext* context, GameState* state)
 			// (boxes falling on player when it's not moving feel unnatural)
 			continue;
 
-		float amount = SDL_clamp(length_sq(state->player->velocity) * 2, 5, 15);
-		float spread = state->player_data.grounded ? PI / 4 : TAU;
+		float amount = SDL_clamp(length_sq(state->player->velocity) * 2, 2, 4);
+		float spread = 0;
 		clutter_apply_impulse_random(sensor_event->sensorShapeId, direction, amount, spread);
 	}
 
 	{
 		const float zoom_speed = 1;
-		vec2f camera_offset = vec2f { 0.0f, 3.0f } / context->camera_active->zoom;
+		vec2f camera_offset = vec2f { -5.0f, 3.0f } / context->camera_active->zoom;
 		// camera follows player
 		context->camera_active->world_position = state->player->transform.position + camera_offset;
 		context->camera_active->zoom += context->mouse_scroll * zoom_speed * context->delta;
@@ -437,7 +383,7 @@ int main(void)
 	context.window_w = WINDOW_W;
 	context.window_h = WINDOW_H;
 
-	SDL_CreateWindowAndRenderer("E04 - Physics", WINDOW_W, WINDOW_H, 0, &window, &context.renderer);
+	SDL_CreateWindowAndRenderer("ES04.2 - Physics step", WINDOW_W, WINDOW_H, 0, &window, &context.renderer);
 	SDL_SetRenderDrawBlendMode(context.renderer, SDL_BLENDMODE_BLEND);
 	
 	// increase the zoom to make debug text more legible
@@ -470,6 +416,7 @@ int main(void)
 	SDL_Time walltime_work_end;
 	SDL_Time elapsed_work = 0;
 	SDL_Time elapsed_frame = 0;
+	SDL_Time accumulator_physics = 0;
 
 	SDL_GetCurrentTime(&walltime_frame_beg);
 	walltime_frame_end = walltime_frame_beg;
@@ -523,6 +470,7 @@ int main(void)
 							case SDLK_F1: DEBUG_render_textures = !DEBUG_render_textures; break;
 							case SDLK_F2: DEBUG_render_outlines = !DEBUG_render_outlines; break;
 							case SDLK_F3: DEBUG_physics = !DEBUG_physics; break;
+							case SDLK_F4: DEBUG_physics_fixed_step = !DEBUG_physics_fixed_step; accumulator_physics = 0; break;
 						}
 					}
 					break;
@@ -536,6 +484,46 @@ int main(void)
 
 		// update
 		game_update(&context, &state);
+		engine_artificial_delay(DEBUG_delay_frame_ms, 0.0f);
+
+		// physics
+		{
+			DEBUG_physics_steps_per_frame_counter = 0;
+			if(DEBUG_physics_fixed_step)
+			{
+				// decouple physics step from framerate, running 0, 1 or multiple physics step per frame
+				while(accumulator_physics >= PHYSICS_TIMESTEP_NSECS && DEBUG_physics_steps_per_frame_counter < PHYSICS_MAX_TIMESTEPS_PER_FRAME)
+				{
+					b2World_Step(state.world_id, PHYSICS_TIMESTEP_SECS, 4);
+					engine_artificial_delay(DEBUG_delay_physics_ms, 0.0f);
+					++DEBUG_physics_steps_per_frame_counter;
+					accumulator_physics -= PHYSICS_TIMESTEP_NSECS;
+				}
+			}
+			else
+			{
+				// run the simulation in synch with the rest of the game. Works fine as long as
+				// 1. PHYSICS_TIMESTEP == TARGET_FRAMERATE (which we can ensure, it's just parameters that we have to decide)
+				// 2. computing a frame takes less than PHYSICS_TIMESTEP (which we CANNOT ensure, of course)
+				b2World_Step(state.world_id, PHYSICS_TIMESTEP_SECS, 4);
+				engine_artificial_delay(DEBUG_delay_physics_ms, 0.0f);
+				++DEBUG_physics_steps_per_frame_counter;
+			}
+
+			// entities
+			for(int i = 0; i < state.entities_alive_count; ++i)
+			{
+				Entity* entity = &state.entities[i];
+				b2Vec2 physics_vel = b2Body_GetLinearVelocity(entity->body_id);
+				b2Vec2 physics_pos = b2Body_GetPosition(entity->body_id);
+				b2Rot  physics_rot = b2Body_GetRotation(entity->body_id);
+				entity->velocity = value_cast(vec2f, physics_vel); 
+				entity->transform.position = value_cast(vec2f, physics_pos);
+				entity->transform.rotation = b2Rot_GetAngle(physics_rot);
+			}
+		}
+		game_update_post_physics(&context, &state);
+
 		game_render(&context, &state);
 
 #ifdef ENABLE_DIAGNOSTICS
@@ -552,43 +540,34 @@ int main(void)
 			ImGui::LabelText("tot", "%6.3f ms/f", (float)elapsed_frame / (float)MILLIS(1));
 
 			ImGui::Text("Simulation config");
-			if(ImGui::Combo("Simulation type", &DEBUG_simulation_type_current, DEBUG_simulation_types, array_size(DEBUG_simulation_types)))
-				// reset simulation on type change
-				game_reset(&context, &state);
 			b2Vec2 player_pos_physics = b2Body_GetPosition(state.player->body_id);
 			ImGui::LabelText("player pos game ", "%4.2f   %4.2f", state.player->transform.position.x, state.player->transform.position.y);
 			ImGui::LabelText("player pos box2d", "%4.2f   %4.2f", player_pos_physics.x, player_pos_physics.y);
 			b2Vec2 velocity = b2Body_GetLinearVelocity(state.player->body_id);
 			ImGui::LabelText("player velocity", "%4.2f   %4.2f", velocity.x, velocity.y);
 
-			ImGui::Text("Simulation type params");
-			switch(DEBUG_simulation_type_current)
-			{
-			case SIMULATION_TYPE_DYNAMIC:
-				{
-					if(ImGui::DragFloat("gravity", &player_dynamic_gravity))
-						b2World_SetGravity(state.world_id, b2Vec2 { 0, player_dynamic_gravity });
-					ImGui::DragFloat("jump impulse", &player_dynamic_jump_impulse);
-					ImGui::DragFloat("mov force", &player_dynamic_mov_force);
-					break;
-				}
-				case SIMULATION_TYPE_KINEMATIC:
-				{
-					ImGui::DragFloat("horizontal velocity", &state.player_data.v_x);
-					ImGui::DragFloat("jump height", &state.player_data.h);
-					ImGui::DragFloat("jump distance", &state.player_data.x_h);
-					ImGui::LabelText("jump gravity", "%4.2f", state.player_data.g);
-					ImGui::LabelText("jump initial vertical velocity", "%4.2f", state.player_data.v_0);
-					break;
-				}
-			}
+			ImGui::Text("Jump params");
+			ImGui::DragFloat("horizontal velocity", &state.player_data.v_x);
+			ImGui::DragFloat("jump height", &state.player_data.h);
+			ImGui::DragFloat("jump distance", &state.player_data.x_h);
+			ImGui::LabelText("jump gravity", "%4.2f", state.player_data.g);
+			ImGui::LabelText("jump initial vertical velocity", "%4.2f", state.player_data.v_0);
+
+			ImGui::Text("Physics Timing params");
+			ImGui::LabelText("steps per frame", "%3d", DEBUG_physics_steps_per_frame_counter);
+			ImGui::LabelText("accumulator", "%6.3f ms/f", (float)accumulator_physics  / (float)MILLIS(1));
+			ImGui::DragFloat("delay (physics)", &DEBUG_delay_physics_ms, 0.1f, 0.0f, 1000.0f);
+			ImGui::DragFloat("delay (frame)", &DEBUG_delay_frame_ms, 0.1f, 0.0f, 1000.0f);
+			
 
 			ImGui::Text("Debug");
 			if(ImGui::Button("[TAB] reset"))
 				game_reset(&context, &state);
-			ImGui::Checkbox("[F1]  render textures", &DEBUG_render_textures);
-			ImGui::Checkbox("[F2]  render outlines", &DEBUG_render_outlines);
-			ImGui::Checkbox("[F3]  render physics", &DEBUG_physics);
+			ImGui::Checkbox("[F1] render textures", &DEBUG_render_textures);
+			ImGui::Checkbox("[F2] render outlines", &DEBUG_render_outlines);
+			ImGui::Checkbox("[F3] render physics", &DEBUG_physics);
+			if(ImGui::Checkbox("[F4] use fixed step", &DEBUG_physics_fixed_step))
+				accumulator_physics = 0;
 			ImGui::End();
 		}
 #endif
@@ -605,13 +584,14 @@ int main(void)
 		elapsed_frame = walltime_frame_end - walltime_frame_beg;
 
 		// // NOTE: corrently rendering diagnostics through ImGui (see above)
-		// sdl_render_duagnostics(&context, elapsed_work, elapsed_frame);
+		// sdl_render_diagnostics(&context, elapsed_work, elapsed_frame);
 
 		// render
 		SDL_RenderPresent(context.renderer);
 
 		context.delta = (float)elapsed_frame / (float)SECONDS(1);
 		context.uptime += context.delta;
+		accumulator_physics += elapsed_frame;
 		walltime_frame_beg = walltime_frame_end;
 	}
 }

@@ -20,6 +20,8 @@ vec2f itu_lib_sprite_get_world_size(SDLContext* context, Sprite* sprite, Transfo
 void itu_lib_sprite_render(SDLContext* context, Sprite* sprite, Transform* transform);
 void itu_lib_sprite_render_debug(SDLContext* context, Sprite* sprite, Transform* transform);
 
+#endif // ITU_LIB_SPRITE_HPP
+
 #if (defined ITU_LIB_SPRITE_IMPLEMENTATION) || (defined ITU_UNITY_BUILD)
 
 #include <SDL3/SDL.h>
@@ -98,5 +100,3 @@ void itu_lib_sprite_render_debug(SDLContext* context, Sprite* sprite, Transform*
 	itu_lib_render_draw_point(context->renderer, pos, 5, COLOR_YELLOW);
 }
 #endif // ITU_LIB_SPRITE_IMPLEMENTATION
-
-#endif // ITU_LIB_SPRITE_HPP
