@@ -1,6 +1,3 @@
-#define STB_IMAGE_IMPLEMENTATION
-#define ITU_UNITY_BUILD
-
 #define TEXTURE_PIXELS_PER_UNIT 128
 #define CAMERA_PIXELS_PER_UNIT  128
 
@@ -9,6 +6,7 @@
 #include <itu_lib_render.hpp>
 #include <itu_lib_sprite.hpp>
 #include <itu_lib_overlaps.hpp>
+//#include <itu_unity_include.hpp>
 
 #define ENABLE_DIAGNOSTICS
 
