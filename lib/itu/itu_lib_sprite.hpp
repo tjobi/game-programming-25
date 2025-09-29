@@ -11,6 +11,7 @@ struct Sprite
 	SDL_FRect    rect;
 	vec2f        pivot;
 	color        tint;
+	bool         flip_horizontal;
 };
 
 void itu_lib_sprite_init(Sprite* sprite, SDL_Texture* texture, SDL_FRect rect);
@@ -87,7 +88,7 @@ void itu_lib_sprite_render(SDLContext* context, Sprite* sprite, Transform* trans
 		&rect_dst,
 		(-transform->rotation) * RAD_2_DEG,
 		&pivot_dst,
-		SDL_FLIP_NONE
+		sprite->flip_horizontal ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE
 	);
 }
 
