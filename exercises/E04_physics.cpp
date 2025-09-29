@@ -26,10 +26,20 @@
 #define ENTITY_COUNT 1024
 #define GRAVITY      -9.8f
 
-#define COLLISION_FILTER_PLAYER         0b00001
-#define COLLISION_FILTER_GROUND         0b00010
-#define COLLISION_FILTER_CLUTTER        0b00100
-#define COLLISION_FILTER_CLUTTER_SENSOR 0b01000
+#define COLLISION_FILTER_PLAYER         0b0000001
+#define COLLISION_FILTER_GROUND         0b0000010
+#define COLLISION_FILTER_CLUTTER        0b0000100
+#define COLLISION_FILTER_CLUTTER_SENSOR 0b0001000
+#define COLLISION_FILTER_GHOST 	        0b0010000
+#define COLLISION_FILTER_GHOST_SENSOR   0b0100000
+#define COLLISION_FILTER_BULLET         0b10000000
+
+
+constexpr float DASH_CD_SECS = 1.0f;
+constexpr float DASH_SPEED = 50;
+constexpr float GHOST_SPEED  = 2.0f;
+constexpr float BULLET_SPEED = 100.0f;
+constexpr float BULLET_DENSITY = 5.0f;
 
 enum SimulationType
 {
@@ -44,6 +54,15 @@ int DEBUG_simulation_type_current = 0;
 const char* const DEBUG_simulation_types[] = 
 {
 	"Dynamic", "\"Kinematic\""
+};
+
+#define PLATFORMS_COUNT 5
+const vec2f PLATFORMS[PLATFORMS_COUNT]= {
+	{   5,  1 },
+	{  -5,  1 },
+	{  -10, 4 },
+	{   12, 3 },
+	{   15, 5 }
 };
 
 b2DebugDraw debug_draw;
@@ -70,6 +89,12 @@ typedef struct PlayerData
 	float v_0; // initial VERTICAL velocity (for current jump)
 	float v_x; // initial foot speed (for current jump)
 	float t_h; // jump duration (for current jump)
+
+	//Gameplay?
+	bool is_dashing;
+	float dash_timer;
+	float dash_cooldown;
+	vec2f dash_direction;
 } PlayerData;
 
 static float player_dynamic_gravity = -9.8f;
@@ -80,6 +105,9 @@ struct GameState
 {
 	// shortcut references
 	Entity* player;
+	Entity* ghost;
+	Entity* bullet;
+	float bullet_timer;
 
 	// game-allocated memory
 	Entity* entities;
@@ -91,6 +119,9 @@ struct GameState
 
 	// box2d
 	b2WorldId world_id;
+
+	//Game over
+	bool game_over;
 };
 
 static Entity* entity_create(GameState* state)
@@ -139,6 +170,33 @@ void clutter_apply_impulse_random(b2ShapeId clutte_entity, b2Vec2 direction, flo
 	b2Body_ApplyLinearImpulse(body_id, impulse, point, true);
 }
 
+static void handle_dashing(SDLContext* context, PlayerData* data) 
+{
+    if (data->is_dashing)
+    {
+        data->dash_timer -= context->delta;
+        if (data->dash_timer <= 0) data->is_dashing = false;
+    }
+    else
+    {
+        data->dash_cooldown -= context->delta;
+
+		if (data->dash_cooldown <= 0 && context->btn_isdown_action0)
+		{
+			data->is_dashing = true;
+			data->dash_timer = .1f; //dash for x seconds
+			data->dash_cooldown = DASH_CD_SECS; // 1-second cooldown before the next dash
+	
+			if (context->btn_isdown_left)
+				data->dash_direction = VEC2F_LEFT;
+			else if (context->btn_isdown_right)
+				data->dash_direction = VEC2F_RIGHT;
+			else
+				data->dash_direction = VEC2F_ZERO; // Default to no movement if no direction is pressed
+		}
+    }	
+}
+
 static void game_init(SDLContext* context, GameState* state)
 {
 	// allocate memory
@@ -149,9 +207,9 @@ static void game_init(SDLContext* context, GameState* state)
 	
 	state->player_data = { 0 };
 	state->player_data.g = -66.67f;
-	state->player_data.h   = 3.0f;
-	state->player_data.x_h = 1.5f;
-	state->player_data.v_x = 5.0f;
+	state->player_data.h   = 6.0f;
+	state->player_data.x_h = 5.0f;
+	state->player_data.v_x = 7.0f;
 
 	// texture atlases
 	state->atlas = texture_create(context, "data/kenney/tiny_dungeon_packed.png", SDL_SCALEMODE_NEAREST);
@@ -181,7 +239,7 @@ static void game_reset(SDLContext* context, GameState* state)
 		itu_lib_sprite_init(
 			&entity->sprite,
 			state->atlas,
-			itu_lib_sprite_get_rect(0, 9, 16, 16)
+			itu_lib_sprite_get_rect(1, 8, 16, 16)
 		);
 		entity->sprite.pivot.y = 0;
 
@@ -201,7 +259,7 @@ static void game_reset(SDLContext* context, GameState* state)
 			shape_def.enableContactEvents = true;
 			shape_def.enableHitEvents     = true;
 			shape_def.filter.categoryBits = COLLISION_FILTER_PLAYER;
-			shape_def.filter.maskBits = COLLISION_FILTER_GROUND | COLLISION_FILTER_CLUTTER_SENSOR;
+			shape_def.filter.maskBits = COLLISION_FILTER_GROUND | COLLISION_FILTER_CLUTTER_SENSOR | COLLISION_FILTER_GHOST_SENSOR;
 			b2Polygon polygon = b2MakeOffsetBox(size.x / 2, size.y / 2, value_cast(b2Vec2, offset), b2MakeRot(entity->transform.rotation));
 			b2Circle circle;
 			circle.radius = 0.5f;
@@ -224,6 +282,93 @@ static void game_reset(SDLContext* context, GameState* state)
 		Entity* entity = entity_create(state);
 		entity->body_id = b2CreateBody(state->world_id, &body_def);
 		b2CreatePolygonShape(entity->body_id, &shape_def, &polygon);
+	}
+
+	//platforms
+	{
+		const float platform_height = .5f;
+		for (size_t i = 0; i < PLATFORMS_COUNT; i++)
+		{
+			b2BodyDef platform_body_def = b2DefaultBodyDef();
+			platform_body_def.type = b2_kinematicBody;
+			platform_body_def.fixedRotation = true;
+			platform_body_def.position = value_cast(b2Vec2,PLATFORMS[i]);
+	
+			b2ShapeDef platform_shape_def = b2DefaultShapeDef();
+			platform_shape_def.filter.categoryBits = COLLISION_FILTER_GROUND;
+			b2Polygon platform_polygon = b2MakeBox(3.0f, platform_height);
+	
+			Entity* entity = entity_create(state);
+			entity->body_id = b2CreateBody(state->world_id, &platform_body_def);
+			b2CreatePolygonShape(entity->body_id, &platform_shape_def, &platform_polygon);
+		}
+	}
+
+	//Spawn some ghost(s)
+	{
+		b2BodyDef body_def = b2DefaultBodyDef();
+		body_def.type = b2_dynamicBody;
+		body_def.fixedRotation = true;
+		body_def.position = (b2Vec2){ -10, 0 };
+		
+		//shape for the groud and stuff?
+		b2ShapeDef shape_def_ground = b2DefaultShapeDef();
+		shape_def_ground.density = 1;
+		shape_def_ground.filter.categoryBits = COLLISION_FILTER_GHOST;
+		shape_def_ground.filter.maskBits     = COLLISION_FILTER_GROUND | COLLISION_FILTER_CLUTTER | COLLISION_FILTER_BULLET;
+
+		//For the ghost sensor - to determine if player is eaten
+		b2ShapeDef shape_def = b2DefaultShapeDef();
+		shape_def.density = 0.2f;
+		shape_def.isSensor = true;
+		shape_def.enableSensorEvents = true;
+		shape_def.filter.categoryBits = COLLISION_FILTER_GHOST_SENSOR;
+		shape_def.filter.maskBits     = COLLISION_FILTER_PLAYER;
+		b2Polygon polygon_box = b2MakeBox(0.5f, 0.5f);
+
+		Entity* entity = state->ghost = entity_create(state);
+		entity->transform.scale = VEC2F_ONE;
+		vec2f size = itu_lib_sprite_get_world_size(context, &entity->sprite, &entity->transform);
+		vec2f offset = -mul_element_wise(size, entity->sprite.pivot - vec2f{ 0.5f, 0.5f });
+
+		entity->body_id = b2CreateBody(state->world_id, &body_def);
+		b2CreatePolygonShape(entity->body_id, &shape_def_ground, &polygon_box);
+		b2CreatePolygonShape(entity->body_id, &shape_def, &polygon_box);
+		itu_lib_sprite_init(
+			&entity->sprite,
+			state->atlas,
+			itu_lib_sprite_get_rect(1, 10, 16, 16)
+		);
+	}
+
+	// bullets
+	{
+		b2BodyDef body_def = b2DefaultBodyDef();
+		body_def.type = b2_dynamicBody;
+		body_def.fixedRotation = false;
+		body_def.position = (b2Vec2){ 5, 0 };
+
+		b2ShapeDef shape_def = b2DefaultShapeDef();
+		shape_def.density = BULLET_DENSITY;
+		shape_def.filter.categoryBits = COLLISION_FILTER_BULLET;
+		shape_def.filter.maskBits     = COLLISION_FILTER_GROUND | COLLISION_FILTER_CLUTTER | COLLISION_FILTER_GHOST;
+		shape_def.enableContactEvents = true;
+		shape_def.enableHitEvents     = true;
+		b2Polygon polygon_box = b2MakeBox(.5f,.5f);
+
+		Entity* entity = state->bullet = entity_create(state);
+		state->bullet_timer = 0;
+		entity->transform.scale = VEC2F_ONE;
+		vec2f size = itu_lib_sprite_get_world_size(context, &entity->sprite, &entity->transform);
+		vec2f offset = -mul_element_wise(size, entity->sprite.pivot - vec2f{ 0.5f, 0.5f });
+
+		entity->body_id = b2CreateBody(state->world_id, &body_def);
+		b2CreatePolygonShape(entity->body_id, &shape_def, &polygon_box);
+		itu_lib_sprite_init(
+			&entity->sprite,
+			state->atlas,
+			itu_lib_sprite_get_rect(7, 8, 16, 16)
+		);
 	}
 
 #if 1
@@ -279,6 +424,7 @@ static void game_reset(SDLContext* context, GameState* state)
 
 static void game_update(SDLContext* context, GameState* state)
 {
+	if(state->game_over) return;
 	// player
 	{
 		Entity* player = state->player;
@@ -306,35 +452,80 @@ static void game_update(SDLContext* context, GameState* state)
 			}
 			case SIMULATION_TYPE_KINEMATIC:
 			{
-				vec2f velocity = player->velocity;
-				if(data->grounded)
+				// condition on 'data->grounded' was here before
+				handle_dashing(context, data);
+				if(data->is_dashing)
 				{
+					vec2f dash_speed = {DASH_SPEED, 0};
+					vec2f dash_velocity = mul_element_wise(data->dash_direction, dash_speed); 
+        			b2Body_SetLinearVelocity(player->body_id, value_cast(b2Vec2, dash_velocity));
+				}
+				else
+				{
+					vec2f velocity = player->velocity;
 					if(context->btn_isdown[BTN_TYPE_LEFT])
 		 	 	 		velocity.x = -data->v_x;
 		 			else if(context->btn_isdown[BTN_TYPE_RIGHT])
 		 	 	 		velocity.x = data->v_x;
-					else
-			 	 		velocity.x = 0;
-				 
-					if(context->btn_isjustpressed[BTN_TYPE_SPACE])
+					else velocity.x = 0;
+
+					if(data->grounded && context->btn_isjustpressed[BTN_TYPE_SPACE])
 					{
-				 		compute_jump_parameters(data);
-				 		velocity.y = state->player_data.v_0;
+						compute_jump_parameters(data);
+						velocity.y = state->player_data.v_0;
 					}
-				}
-				else
-				{
-					if(velocity.y > 0)
-				 		velocity.y += state->player_data.g * context->delta;
 					else
-				 		velocity.y += state->player_data.g * context->delta * 3;
+					{
+						if(velocity.y > 0)
+							velocity.y += state->player_data.g * context->delta;
+						else
+							velocity.y += state->player_data.g * context->delta * 3;
+					}
+	
+					b2Body_SetLinearVelocity(player->body_id, value_cast(b2Vec2, velocity));
 				}
 
-		 		b2Body_SetLinearVelocity(player->body_id, value_cast(b2Vec2, velocity));
+				//Try to spawn a bullet?
+				if(context->btn_isdown_action1 && state->bullet_timer <= 0.0f)
+				{
+					
+					Entity* bullet = state->bullet;
+					
+					state->bullet_timer = 0.5f;
+					b2Body_SetLinearVelocity(bullet->body_id, b2Vec2_zero);
+					
+					//we are allowed to spawn it again
+					vec2f direction = context->btn_isdown_left ? VEC2F_LEFT : VEC2F_RIGHT;
+					vec2f spawn_offset = {player->transform.position.x + direction.x * 1.5f, player->transform.position.y + player->sprite.pivot.y};
+					b2Rot rot = direction.x > 0 ? b2MakeRot(-0.5*PI) : b2MakeRot(0.5*PI);
+					b2Body_SetTransform(bullet->body_id, value_cast(b2Vec2, spawn_offset), rot);
+					vec2f impulse = mul_element_wise(direction, vec2f{BULLET_SPEED, 0});
+					b2Body_ApplyLinearImpulseToCenter(bullet->body_id, value_cast(b2Vec2, impulse), true);
+				}
+				if(state->bullet_timer > 0.0f) 
+				{
+					state->bullet_timer -= context->delta;
+				}
 				break;
 			}
 		}
 	}
+	
+	// ghosts
+	{
+		Entity* ghost = state->ghost;
+		vec2f velocity = ghost->velocity;
+		auto coin = SDL_randf() < .5f; 
+		if(coin) //targetting the player
+		{
+			if(ghost->transform.position.x < state->player->transform.position.x )
+				velocity.x = GHOST_SPEED;
+			else
+				velocity.x = -GHOST_SPEED;
+		}
+		b2Body_SetLinearVelocity(ghost->body_id, value_cast(b2Vec2, velocity));
+	}
+
 
 	b2World_Step(state->world_id, TARGET_FRAMERATE_SECS, 4);
 
@@ -355,18 +546,18 @@ static void game_update(SDLContext* context, GameState* state)
 		Entity* entity = state->player;
 		PlayerData* data = &state->player_data;
 
-		 int contacts = b2Body_GetContactCapacity(entity->body_id);
-		 b2ContactData contact_data[contacts];
-		 int actual_contacts = b2Body_GetContactData(state->player->body_id, contact_data, contacts);
-		 
-		 data->grounded = false;
-		 for(int i = 0; i < actual_contacts; ++i)
-		 {
-		 	b2Filter filter_a = b2Shape_GetFilter(contact_data[i].shapeIdA);
-		 	b2Filter filter_b = b2Shape_GetFilter(contact_data[i].shapeIdB);
-		 	if(filter_a.categoryBits & COLLISION_FILTER_GROUND)
-		 		data->grounded = true;
-		 }
+		int contacts = b2Body_GetContactCapacity(entity->body_id);
+		b2ContactData contact_data[contacts];
+		int actual_contacts = b2Body_GetContactData(state->player->body_id, contact_data, contacts);
+		
+		data->grounded = false;
+		for(int i = 0; i < actual_contacts; ++i)
+		{
+			b2Filter filter_a = b2Shape_GetFilter(contact_data[i].shapeIdA);
+			b2Filter filter_b = b2Shape_GetFilter(contact_data[i].shapeIdB);
+			if(filter_a.categoryBits & COLLISION_FILTER_GROUND)
+				data->grounded = true;
+		}
 	}
 
 	// world
@@ -382,6 +573,12 @@ static void game_update(SDLContext* context, GameState* state)
 			// (boxes falling on player when it's not moving feel unnatural)
 			continue;
 
+		b2Filter filter_entity = b2Shape_GetFilter(sensor_event->sensorShapeId);
+		if (filter_entity.categoryBits & COLLISION_FILTER_GHOST_SENSOR)
+		{
+			state->game_over = true;
+			continue;
+		}
 		float amount = SDL_clamp(length_sq(state->player->velocity) * 2, 5, 15);
 		float spread = state->player_data.grounded ? PI / 4 : TAU;
 		clutter_apply_impulse_random(sensor_event->sensorShapeId, direction, amount, spread);
@@ -423,6 +620,11 @@ static void game_render(SDLContext* context, GameState* state)
 
 	SDL_SetRenderDrawColor(context->renderer, 0xFF, 0x00, 0xFF, 0xff);
 	SDL_RenderRect(context->renderer, NULL);
+
+	if(state->game_over) {
+		const char* msg = "You were eaten by a ghost!\nYou have to restart the game";
+		SDL_RenderDebugText(context->renderer, context->window_w / 4, context->window_h / 2, msg);
+	}
 }
 
 // Our state

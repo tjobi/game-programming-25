@@ -123,7 +123,7 @@ inline vec2f mul_element_wise(vec2f a, vec2f b)
 {
 	vec2f ret;
 	ret.x = a.x * b.x;
-	ret.y = a.x * b.y;
+	ret.y = a.y * b.y;
 	return ret;
 }
 
