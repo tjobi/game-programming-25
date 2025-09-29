@@ -63,6 +63,7 @@ void itu_sys_physics_reset(const b2WorldDef* world_def)
 		b2DestroyWorld(sys_physics_data.world_id);
 
 	sys_physics_data.world_id = b2CreateWorld(world_def);
+	stbds_arrfree(sys_physics_data.map_b2body_entity);
 }
 
 void itu_sys_physics_step(float fixed_delta)
