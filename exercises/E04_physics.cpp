@@ -211,6 +211,7 @@ static void game_reset(SDLContext* context, GameState* state)
 {
 	// TMP reset uptime (should probably be two different variables
 	context->uptime = 0;
+	state->game_over = false;
 
 	if(b2World_IsValid(state->world_id))
 		b2DestroyWorld(state->world_id);
@@ -416,7 +417,13 @@ static void game_reset(SDLContext* context, GameState* state)
 
 static void game_update(SDLContext* context, GameState* state)
 {
-	if(state->game_over) return;
+	if(state->game_over) 
+	{
+		if(context->btn_isdown_space)
+			game_reset(context, state);
+		else 
+			return;
+	}
 	// player
 	{
 		Entity* player = state->player;
@@ -539,9 +546,9 @@ static void game_update(SDLContext* context, GameState* state)
 		PlayerData* data = &state->player_data;
 
 		
-		 // NOTE: quick hack because I forgot a VLA in the code again. Exercise solution will do this nicely
-		 static int contad_data_size = 16;
-		 static b2ContactData* contact_data = (b2ContactData*)SDL_calloc(16, sizeof(b2ContactData));
+		//  // NOTE: quick hack because I forgot a VLA in the code again. Exercise solution will do this nicely
+		//  static int contad_data_size = 16;
+		//  static b2ContactData* contact_data = (b2ContactData*)SDL_calloc(16, sizeof(b2ContactData));
 
 		int contacts = b2Body_GetContactCapacity(entity->body_id);
 		b2ContactData contact_data[contacts];
@@ -619,7 +626,7 @@ static void game_render(SDLContext* context, GameState* state)
 	SDL_RenderRect(context->renderer, NULL);
 
 	if(state->game_over) {
-		const char* msg = "You were eaten by a ghost!\nYou have to restart the game";
+		const char* msg = "You were eaten by a ghost!\nPress SPACE to restart";
 		SDL_RenderDebugText(context->renderer, context->window_w / 4, context->window_h / 2, msg);
 	}
 }
