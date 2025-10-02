@@ -53,7 +53,6 @@ SDL_FRect itu_lib_sprite_get_screen_rect(SDLContext* context, Sprite* sprite, Tr
 	sprite_size_world.x = sprite->rect.w / TEXTURE_PIXELS_PER_UNIT;
 	sprite_size_world.y = sprite->rect.h / TEXTURE_PIXELS_PER_UNIT;
 
-	SDL_FRect rect_src = sprite->rect;
 	SDL_FRect rect_dst;
 	rect_dst.w = transform->scale.x * sprite_size_world.x;
 	rect_dst.h = transform->scale.y * sprite_size_world.y;
