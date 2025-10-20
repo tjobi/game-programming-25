@@ -66,11 +66,46 @@ struct PlayerData
 	float g;   // gravity
 };
 
+enum CHARACTER_SPRITE {
+	CHARACTER_SPRITE_IDLE,
+	CHARACTER_SPRITE_WALK_0,
+	CHARACTER_SPRITE_WALK_1,
+	CHARACTER_SPRITE_WALK_2,
+	CHARACTER_SPRITE_WALK_3,
+	CHARACTER_SPRITE_WALK_4,
+	CHARACTER_SPRITE_WALK_5,
+	CHARACTER_SPRITE_WALK_6,
+	CHARACTER_SPRITE_WALK_7,
+	CHARACTER_SPRITE_JUMP,
+	CHARACTER_SPRITE_FALL,
+	CHARACTER_SPRITE_COUNT
+};
+
+const SDL_FRect CHARACTER_SPRITES[CHARACTER_SPRITE_COUNT] = {
+	{ 0,     0,  96, 128 }, // idle
+	{ 0,   512,  96, 128 }, // walk_0
+	{ 96,  512,  96, 128 }, // walk_1
+	{ 192, 512,  96, 128 }, // walk_2
+	{ 288, 512,  96, 128 }, // walk_3
+	{ 384, 512,  96, 128 }, // walk_4
+	{ 480, 512,  96, 128 }, // walk_5
+	{ 576, 512,  96, 128 }, // walk_6
+	{ 672, 512,  96, 128 }, // walk_7
+	{  96,   0,  96, 128 }, // jump
+	{ 192,   0,  96, 128 }  // fall
+};
+
 struct GameState
 {
 	// shortcut references
 	Entity* player;
+	float walk_distance_accumulated;
+	float walk_prev_x;
 	
+	Entity* door;
+	bool door_is_moving;
+	bool door_is_open;
+
 	// game-allocated memory
 	Entity* entities;
 	int entities_alive_count;
@@ -79,6 +114,8 @@ struct GameState
 	// SDL-allocated structures
 	SDL_Texture* atlas_character;
 	SDL_Texture* atlas_tiles;
+
+	b2WorldId world_id;
 };
 
 static Entity* entity_create(GameState* state)
@@ -180,9 +217,11 @@ static void game_init(SDLContext* context, GameState* state)
 	MIX_Audio* music;
 	VALIDATE_PANIC(SDL_Init(SDL_INIT_AUDIO));
 	VALIDATE_PANIC(MIX_Init());
+	// SDL_Log("MIX_Init error: %s", SDL_GetError());
 	VALIDATE_PANIC(mixer = MIX_CreateMixerDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, NULL));
 	VALIDATE_PANIC(music = MIX_LoadAudio(mixer, "data/opengameart.org/music_level_0.ogg", false));
-	VALIDATE_PANIC(MIX_PlayAudio(mixer, music));
+	bool is_playing = MIX_PlayAudio(mixer, music); 
+	VALIDATE_PANIC(is_playing);
 }
 
 static void game_reset(SDLContext* context, GameState* state)
@@ -194,6 +233,7 @@ static void game_reset(SDLContext* context, GameState* state)
 	def_world.gravity.y = GRAVITY;
 	itu_sys_physics_reset(&def_world);
 
+	state->world_id = sys_physics_data.world_id;
 
 	// player
 	{
@@ -202,15 +242,17 @@ static void game_reset(SDLContext* context, GameState* state)
 		state->player_data = { 0 };
 		state->player_data.g = -66.67f;
 
-
 		entity->transform.position = VEC2F_ONE;
 		entity->transform.scale = VEC2F_ONE;
 		itu_lib_sprite_init(
 			&entity->sprite,
 			state->atlas_character,
-			SDL_FRect { 0, 0, 96, 128 } 
+			CHARACTER_SPRITES[CHARACTER_SPRITE_IDLE] 
 		);
 		entity->sprite.pivot.y = 0;
+
+		state->walk_distance_accumulated = 0.0f;
+		state->walk_prev_x = 0.0f;
 
 		// box2d body, shape and polygon
 		{
@@ -260,6 +302,9 @@ static void game_reset(SDLContext* context, GameState* state)
 	// door
 	{
 		Entity* entity = entity_create(state);
+		state->door = entity;
+		state->door_is_moving = false;
+		state->door_is_open = false;
 	
 		entity->transform.position.x = 7;
 		entity->transform.position.y = 1.5;
@@ -332,7 +377,9 @@ static void game_update(SDLContext* context, GameState* state)
 				velocity = VEC2F_ZERO;
 
 			if(context->btn_isjustpressed[BTN_TYPE_SPACE])
+			{
 				compute_jump_parameters(entity, &velocity.y, &data->g);
+			}
 
 		}
 		else
@@ -341,9 +388,13 @@ static void game_update(SDLContext* context, GameState* state)
 				velocity.y = SDL_min(velocity.y, 0);
 
 			if(context->btn_isdown[BTN_TYPE_LEFT])
+			{
 				velocity.x -= hor_accel * context->delta;
+			}
 			else if(context->btn_isdown[BTN_TYPE_RIGHT])
+			{
 				velocity.x += hor_accel * context->delta;
+			}
 			else
 				velocity.x *= hor_decel_factor;
 
@@ -360,6 +411,104 @@ static void game_update(SDLContext* context, GameState* state)
 		if(length_sq(velocity_total) < TMP_player_speed_threshold)
 			velocity_total = VEC2F_ZERO;
 		b2Body_SetLinearVelocity(entity->physics_data.body_id, value_cast(b2Vec2, velocity_total));
+	}
+
+	//Cast a ray from the door
+	{
+		Entity* door = state->door;
+
+		vec2f ray_pos = door->transform.position;
+		ray_pos.y += -0.5f; 
+		vec2f ray_dir_left = VEC2F_LEFT;
+		vec2f ray_dir_right = VEC2F_RIGHT;
+		b2QueryFilter filter = b2DefaultQueryFilter();
+		filter.categoryBits = COLLISION_FILTER_GROUND;
+		filter.maskBits = COLLISION_FILTER_PLAYER;
+		constexpr float door_radius = 0.5f;
+		float ray_cast_distance = door_radius + 3.0f;;
+		float ray_cast_distance_vertical = door_radius + 7.0f;
+		constexpr float DOOR_MAX_Y = 4.5f;
+		constexpr float DOOR_MIN_Y = 1.5f;
+		bool changed = false;
+
+		b2RayResult left = b2World_CastRayClosest(
+			state->world_id, 
+			value_cast(b2Vec2, ray_pos), 
+			b2Vec2{-ray_cast_distance, 0},
+			filter
+		);
+
+		b2RayResult right = b2World_CastRayClosest(
+			state->world_id, 
+			value_cast(b2Vec2, ray_pos), 
+			b2Vec2{ray_cast_distance, 0},
+			filter
+		);
+
+		b2RayResult down = b2World_CastRayClosest(
+			state->world_id, 
+			value_cast(b2Vec2, ray_pos), 
+			b2Vec2{0, -ray_cast_distance_vertical},
+			filter
+		);
+
+		b2RayResult down_right = b2World_CastRayClosest(
+			state->world_id, 
+			value_cast(b2Vec2, ray_pos), 
+			b2Vec2{ray_cast_distance, -ray_cast_distance_vertical},
+			filter
+		);
+
+		b2RayResult down_left = b2World_CastRayClosest(
+			state->world_id, 
+			value_cast(b2Vec2, ray_pos), 
+			b2Vec2{-ray_cast_distance, -ray_cast_distance_vertical},
+			filter
+		);
+		
+		if(left.hit || right.hit || down.hit || down_right.hit || down_left.hit) {
+			if(door->transform.position.y < DOOR_MAX_Y)
+			{
+				vec2f door_velocity = VEC2F_UP;	
+				b2Body_SetLinearVelocity(door->physics_data.body_id, value_cast(b2Vec2, door_velocity));
+				state->door_is_moving = true;
+				changed = true;
+			}
+		} else
+		{
+			SDL_Log("no player hit, is the door open %d", state->door_is_open);
+			if(door->transform.position.y > DOOR_MIN_Y)
+			{
+				vec2f door_velocity = VEC2F_DOWN;	
+				b2Body_SetLinearVelocity(door->physics_data.body_id, value_cast(b2Vec2, door_velocity));
+				state->door_is_moving = true;
+				changed = true;
+			}
+		}
+		
+		if(!changed && state->door_is_moving && door->transform.position.y >= DOOR_MAX_Y)
+		{
+			//bring door to a halt
+			b2Body_SetLinearVelocity(door->physics_data.body_id, b2Vec2_zero);
+			state->door_is_moving = false;	
+			state->door_is_open = true;
+		}
+
+		if(!changed && state->door_is_moving && door->transform.position.y <= DOOR_MIN_Y)
+		{
+			//bring door to a halt
+			b2Body_SetLinearVelocity(door->physics_data.body_id, b2Vec2_zero);
+			state->door_is_moving = false;	
+			state->door_is_open = false;
+		}
+
+		// if(state->door_is_moving && door->transform.position.y <= DOOR_MIN_Y)
+		// {
+		// 	//bring door to a halt
+		// 	b2Body_SetLinearVelocity(door->physics_data.body_id, b2Vec2_zero);
+		// 	state->door_is_moving = false;	
+		// 	state->door_is_open = false;
+		// }
 	}
 }
 
@@ -434,6 +583,54 @@ static void game_update_post_physics(SDLContext* context, GameState* state)
 		// camera follows player
 		context->camera_active->world_position = state->player->transform.position + camera_offset;
 		context->camera_active->zoom += context->mouse_scroll * zoom_speed * context->delta;
+	}
+
+	//update player sprites
+	{
+		Entity* player = state->player;
+		b2Vec2 vel = b2Body_GetLinearVelocity(player->physics_data.body_id);
+		vec2f velocity = value_cast(vec2f, vel);
+		Sprite* player_sprite = &player->sprite;
+		constexpr int walk_frame_count = 8;
+		constexpr float walk_stride_length = 3.0f;
+		constexpr float WALK_NO_MORE = FLOAT_EPSILON;
+
+		if(data->is_grounded)
+		{
+			float dx = SDL_fabsf(player->transform.position.x - state->walk_prev_x);
+			state->walk_prev_x = player->transform.position.x;
+			if(dx > WALK_NO_MORE)
+				state->walk_distance_accumulated += dx;
+			
+			if(state->walk_distance_accumulated > walk_stride_length*1000.0f)
+				state->walk_distance_accumulated = SDL_fmodf(state->walk_distance_accumulated, walk_stride_length);
+		}
+
+		if(velocity.x > 0) 
+			player_sprite->flip_horizontal = false;
+		else if(velocity.x < 0)
+			player_sprite->flip_horizontal = true;
+
+		if(!data->is_grounded)
+		{
+			if(velocity.y > 0)
+				player_sprite->rect = CHARACTER_SPRITES[CHARACTER_SPRITE_JUMP];
+			else
+				player_sprite->rect = CHARACTER_SPRITES[CHARACTER_SPRITE_FALL];
+		}
+		else 
+		{
+			if(SDL_fabsf(velocity.y) < FLOAT_EPSILON)
+			{
+				player_sprite->rect = CHARACTER_SPRITES[CHARACTER_SPRITE_IDLE];
+			}
+			float cycle_pos = SDL_fmodf(state->walk_distance_accumulated / walk_stride_length, 1.0f);
+			if(SDL_fabsf(velocity.x) > WALK_NO_MORE)
+			{
+				int frame = (int)(cycle_pos * walk_frame_count) % walk_frame_count;
+				player_sprite->rect = CHARACTER_SPRITES[CHARACTER_SPRITE_WALK_0 + frame];
+			}
+		}
 	}
 }
 
