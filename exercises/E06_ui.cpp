@@ -71,12 +71,56 @@ struct EX6_Sprite9Patch
 };
 register_component(EX6_Sprite9Patch)
 
+struct EX6_UIImageButton
+{
+	SDL_Texture *inactive, *active;
+	//function pointer to a callback function
+	void (*callback)(float); 
+	ITU_EntityId target;
+};
+register_component(EX6_UIImageButton)
+
 static ITU_EntityId id_player;
 
 
 // ============================================================================================
 // TMP methods
 // ============================================================================================
+
+void ex6_system_uiimagebutton(SDLContext* context, ITU_EntityId* entity_ids, int entity_ids_count) 
+{	
+	vec2f mouse_pos = context->mouse_pos;
+	vec2f mouse_screen_pos = point_window_to_screen(context, mouse_pos);
+
+	for(int i = 0; i < entity_ids_count; ++i)
+	{
+		ITU_EntityId id = entity_ids[i];
+		EX6_UIImageButton* button = entity_get_data(id, EX6_UIImageButton);
+		EX6_Sprite9Patch* sprite = entity_get_data(id, EX6_Sprite9Patch);
+		EX6_TransformScreen* transform = entity_get_data(id, EX6_TransformScreen);
+
+		float w = sprite->rect.w * transform->scale.x;
+		float h = sprite->rect.h * transform->scale.y;
+		// // rect_dst = rect_global_to_screen(context, rect_dst);
+		vec2f min = { 
+			.x = transform->position.x - sprite->pivot.x * w,
+			.y = transform->position.y - sprite->pivot.y * h
+		};
+		vec2f max = { min.x + w, min.y + h };
+		
+		if(context->btn_isdown_action0 && itu_lib_overlaps_point_rect(mouse_screen_pos, min, max))
+		{
+			sprite->texture = button->active;
+
+			if(context->btn_isjustpressed_action0 && button->callback != nullptr) 
+				button->callback(context->delta);
+		}
+		else {
+			sprite->texture = button->inactive;
+		}
+
+	}
+}
 
 void ex6_system_camera_target(SDLContext* context, ITU_EntityId* entity_ids, int entity_ids_count)
 {
@@ -178,6 +222,15 @@ void ex6_system_sprite9patch_render_camera(SDLContext* context, ITU_EntityId* en
 // ============================================================================================
 // COMPONENT DEBUG IR RENDER methods
 // ============================================================================================
+void ex6_debug_ui_render_uiimagebutton(SDLContext* context, void* data) 
+{
+	EX6_UIImageButton* data_button = (EX6_UIImageButton*)data;
+	
+	itu_debug_ui_widget_entityid("target", data_button->target);
+	ImGui::Text("inactive texture: %p", data_button->inactive);
+	ImGui::Text("active texture  : %p", data_button->active);
+	ImGui::Text("Callback ptr    : %p", data_button->callback);
+}
 
 void ex6_debug_ui_render_playerdata(SDLContext* context, void* data)
 {
@@ -243,6 +296,8 @@ struct GameState
 	// SDL-allocated structures
 	SDL_Texture* atlas_space;
 	SDL_Texture* ui_healtbar;
+	SDL_Texture* ui_imagebutton;
+	SDL_Texture* ui_imagebutton_depth;
 };
 
 void ex6_system_assign_player_target(SDLContext* context, ITU_EntityId* entity_ids, int entity_ids_count)
@@ -332,6 +387,8 @@ static void game_init(SDLContext* context, GameState* state)
 	// texture atlases
 	state->atlas_space = texture_create(context, "data/kenney/simpleSpace_tilesheet_2.png", SDL_SCALEMODE_LINEAR);
 	state->ui_healtbar = texture_create(context, "data/kenney/UI/bar_round_gloss_small_red.png", SDL_SCALEMODE_LINEAR);
+	state->ui_imagebutton = texture_create(context, "data/kenney/UI/button_rectangle.png", SDL_SCALEMODE_LINEAR);
+	state->ui_imagebutton_depth = texture_create(context, "data/kenney/UI/button_rectangle_depth.png", SDL_SCALEMODE_LINEAR);
 
 	itu_sys_estorage_init(512);
 	itu_sys_physics_init(context);
@@ -341,12 +398,14 @@ static void game_init(SDLContext* context, GameState* state)
 	enable_component(EX6_HealthRenderer);
 	enable_component(EX6_TransformScreen);
 	enable_component(EX6_Sprite9Patch);
+	enable_component(EX6_UIImageButton);
 
 	add_component_debug_ui_render(EX6_PlayerData, ex6_debug_ui_render_playerdata);
 	add_component_debug_ui_render(EX6_Health, ex6_debug_ui_render_health);
 	add_component_debug_ui_render(EX6_HealthRenderer, ex6_debug_ui_render_healthrenderer);
 	add_component_debug_ui_render(EX6_TransformScreen, ex6_debug_ui_render_transformscreen);
 	add_component_debug_ui_render(EX6_Sprite9Patch, ex6_debug_ui_render_sprite9patch);
+	add_component_debug_ui_render(EX6_UIImageButton, ex6_debug_ui_render_uiimagebutton);
 
 	itu_sys_estorage_tag_set_debug_name(TAG_CAMERA_TARGET, "camera target");
 	itu_sys_estorage_tag_set_debug_name(TAG_ASTEROID, "asteroid");
@@ -357,6 +416,7 @@ static void game_init(SDLContext* context, GameState* state)
 	add_system(ex6_system_health                    , component_mask(EX6_HealthRenderer)  | component_mask(EX6_Sprite9Patch), 0);
 	add_system(ex6_system_sprite_render_camera      , component_mask(EX6_TransformScreen) | component_mask(Sprite)          , 0);
 	add_system(ex6_system_sprite9patch_render_camera, component_mask(EX6_TransformScreen) | component_mask(EX6_Sprite9Patch), 0);
+	add_system(ex6_system_uiimagebutton				, component_mask(EX6_UIImageButton), 0);
 }
 
 static void game_reset(SDLContext* context, GameState* state)
@@ -400,7 +460,6 @@ static void game_reset(SDLContext* context, GameState* state)
 		EX6_Health health;
 		health.max = 100;
 		health.curr = 100;
-
 
 		entity_add_component(id_player, Transform     , transform);
 		entity_add_component(id_player, Sprite        , sprite);
@@ -472,6 +531,35 @@ static void game_reset(SDLContext* context, GameState* state)
 		entity_add_component(id, EX6_Sprite9Patch, sprite);
 		entity_add_component(id, EX6_HealthRenderer, renderer);
 	}
+
+	// the button?
+	{
+		ITU_EntityId id = itu_entity_create();
+		itu_entity_set_debug_name(id, "UI-ImageButton");
+		EX6_TransformScreen transform = { 0 };
+		transform.scale = VEC2F_ONE*0.5;
+		transform.position = { 20, 60 };
+
+		EX6_Sprite9Patch   sprite;
+		sprite.rect = { 0, 0, 210, 70 };
+		sprite.texture = state->ui_imagebutton;
+		sprite.size = { 210, 70 };
+		sprite.margins_hor = { 8, 8 };
+		sprite.margins_ver = { 0, 0 };
+		sprite.pivot.x = 0;
+		sprite.pivot.y = 0;//0.5f;
+		sprite.tint = COLOR_WHITE;
+
+		EX6_UIImageButton btn;
+		btn.target = id;
+		btn.callback = [](float delta) { SDL_Log("(%f): Button was clicked!", delta); };
+		btn.active = state->ui_imagebutton_depth;
+		btn.inactive = state->ui_imagebutton;
+
+		entity_add_component(id, EX6_TransformScreen, transform);
+		entity_add_component(id, EX6_Sprite9Patch, sprite);
+		entity_add_component(id, EX6_UIImageButton, btn);
+	}
 }
 
 int main(void)
@@ -526,6 +614,8 @@ int main(void)
 	sdl_input_set_mapping_keyboard(&context, SDLK_Q,     BTN_TYPE_ACTION_0);
 	sdl_input_set_mapping_keyboard(&context, SDLK_E,     BTN_TYPE_ACTION_1);
 	sdl_input_set_mapping_keyboard(&context, SDLK_SPACE, BTN_TYPE_SPACE);
+
+	sdl_input_set_mapping_mouse(&context, SDL_BUTTON_LEFT, BTN_TYPE_ACTION_0);
 
 	while(!quit)
 	{
